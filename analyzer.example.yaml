@@ -1,0 +1,51 @@
+# Пример конфигурации log-analyzer со всеми параметрами и значениями по умолчанию.
+# Скопируйте, оставьте только то, что меняете, и подключите: log-analyzer analyze -i app.log -c analyzer.yaml
+# Справочник: docs/CONFIGURATION.md
+
+parse:
+  charset: UTF-8
+  # Часовой пояс логов — важен для форматов без смещения (2026-08-09 10:00:00)
+  zone: Europe/Moscow
+  # Дата для логов, где есть только время (дефолтный шаблон Logback)
+  # defaultDate: 2026-08-09
+  builtinPatterns: true
+  extractFromMessage: true
+  maxEvents: 0
+  maxMultilineLines: 2000
+  # Свой формат логов: regex с именованными группами ts, level, thread, logger, msg, trace, app, pid
+  patterns: []
+  #  - name: my-format
+  #    regex: '^(?<ts>\S+)\|(?<level>\w+)\|(?<logger>[^|]+)\|(?<msg>.*)$'
+
+correlation:
+  priority: [TRACE, REQUEST, SESSION, THREAD]
+  threadGapSeconds: 30
+  inheritTraceFromThread: true
+  inheritWindowSeconds: 10
+  fallbackToFile: true
+  minEventsPerTimeline: 0
+  # Свои бизнес-ключи из MDC — по ним тоже можно собирать цепочки
+  additionalKeys: []
+  #  - orderId
+  #  - paymentId
+
+timeline:
+  dedup: true
+  dedupNormalize: true
+  dedupWindowSeconds: 300
+  slowMs: 1000
+  linkHttp: true
+  suspiciousGapSeconds: 5
+
+rules:
+  builtin: true
+  files: []
+  #  - ./my-rules.yaml
+
+analysis:
+  minConfidence: 0.3
+  maxAlternatives: 3
+  detectCascade: true
+  # Пакеты вашего кода — помогают показать место ошибки в вашем коде, а не во фреймворке
+  applicationPackages: []
+  #  - com.mycompany.orders

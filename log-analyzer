@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+# Запуск анализатора логов одной командой:
+#   ./log-analyzer analyze -i app.log
+#   ./log-analyzer analyze --paste
+# При первом запуске проект собирается автоматически.
+set -e
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+JAR="$ROOT/cli/build/libs/log-analyzer.jar"
+
+JAVA="java"
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVA="$JAVA_HOME/bin/java"
+fi
+
+if [ ! -f "$JAR" ]; then
+    echo "Building log-analyzer... (first run only)"
+    "$ROOT/gradlew" -q :cli:fatJar
+fi
+
+exec "$JAVA" -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "$JAR" "$@"
