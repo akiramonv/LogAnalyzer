@@ -1,0 +1,12 @@
+2026-08-09T10:04:11.204+03:00  INFO 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.web.OrderController : Получен запрос POST /api/v1/orders userId=4417
+2026-08-09T10:04:11.219+03:00 DEBUG 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.service.OrderService : Валидация заказа orderId=88213
+{"@timestamp":"2026-08-09T07:04:11.230Z","level":"WARN","logger_name":"com.example.orders.service.PricingService","thread_name":"nio-8080-exec-3","message":"Профиль скидок не найден customerId=4417","traceId":"8f3c2a1b4d5e6f70","service":"order-service"}
+2026-08-09T10:04:11.261+03:00 ERROR 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.web.OrderController : Не удалось обработать заказ orderId=88213
+java.lang.NullPointerException: Cannot invoke "com.example.orders.model.DiscountProfile.rate()" because "profile" is null
+	at com.example.orders.service.PricingService.applyDiscount(PricingService.java:88)
+	at com.example.orders.service.OrderService.createOrder(OrderService.java:134)
+	at com.example.orders.web.OrderController.create(OrderController.java:61)
+	... 62 common frames omitted
+2026-08-09T10:04:11.268+03:00  INFO 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.web.OrderController : Ответ POST /api/v1/orders status=500 duration=64ms
+2026-08-09T10:09:40.001+03:00  INFO 12345 --- [order-service] [nio-8080-exec-9] [2b3c4d5e6f708192,1a2b3c4d5e6f7081] c.e.o.web.OrderController : Получен запрос GET /api/v1/orders/88300
+2026-08-09T10:09:40.052+03:00  INFO 12345 --- [order-service] [nio-8080-exec-9] [2b3c4d5e6f708192,1a2b3c4d5e6f7081] c.e.o.web.OrderController : Ответ GET /api/v1/orders/88300 status=200 duration=51ms

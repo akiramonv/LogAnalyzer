@@ -1,0 +1,25 @@
+2026-08-09 11:20:14.331  INFO [billing-service,5e6f7a8b9c0d1e2f,3a4b5c6d7e8f9a0b,true] 4821 --- [nio-8082-exec-4] c.e.b.web.InvoiceController              : Получен запрос POST /api/v1/invoices/close invoiceId=550231
+2026-08-09 11:20:14.335  INFO [billing-service,5e6f7a8b9c0d1e2f,3a4b5c6d7e8f9a0b,true] 4821 --- [nio-8082-exec-4] c.e.b.service.InvoiceService             : Открыта транзакция закрытия счёта invoiceId=550231
+2026-08-09 11:20:14.339  WARN [billing-service,5e6f7a8b9c0d1e2f,3a4b5c6d7e8f9a0b,true] 4821 --- [nio-8082-exec-4] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Thread starvation or clock leap detected (housekeeper delta=1m2s430ms)
+2026-08-09 11:20:44.512 ERROR [billing-service,5e6f7a8b9c0d1e2f,3a4b5c6d7e8f9a0b,true] 4821 --- [nio-8082-exec-4] c.e.b.service.InvoiceService             : Ошибка при закрытии счёта invoiceId=550231
+org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+	at org.springframework.jdbc.datasource.DataSourceUtils.getConnection(DataSourceUtils.java:82)
+	at org.springframework.jdbc.core.JdbcTemplate.execute(JdbcTemplate.java:330)
+	at com.example.billing.repository.InvoiceRepository.close(InvoiceRepository.java:97)
+	at com.example.billing.service.InvoiceService.closeInvoice(InvoiceService.java:212)
+	at com.example.billing.web.InvoiceController.close(InvoiceController.java:48)
+Caused by: java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available, request timed out after 30001ms (total=20, active=20, idle=0, waiting=7)
+	at com.zaxxer.hikari.pool.HikariPool.createTimeoutException(HikariPool.java:696)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:197)
+	at com.zaxxer.hikari.HikariDataSource.getConnection(HikariDataSource.java:100)
+	... 41 common frames omitted
+2026-08-09 11:20:44.520 ERROR [billing-service,5e6f7a8b9c0d1e2f,3a4b5c6d7e8f9a0b,true] 4821 --- [nio-8082-exec-4] c.e.b.web.InvoiceController              : Ответ POST /api/v1/invoices/close status=500 duration=30189ms
+2026-08-09 11:20:44.523  WARN [billing-service,5e6f7a8b9c0d1e2f,3a4b5c6d7e8f9a0b,true] 4821 --- [nio-8082-exec-4] o.s.t.i.TransactionInterceptor           : Транзакция помечена как rollback-only
+2026-08-09 11:20:45.010  INFO [billing-service,,,] 4821 --- [       Thread-19] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Pool stats (total=20, active=20, idle=0, waiting=11)
+2026-08-09 11:21:15.044 ERROR [billing-service,6f7a8b9c0d1e2f30,4b5c6d7e8f9a0b1c,true] 4821 --- [nio-8082-exec-9] c.e.b.service.InvoiceService             : Ошибка при закрытии счёта invoiceId=550232
+org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+	at org.springframework.jdbc.datasource.DataSourceUtils.getConnection(DataSourceUtils.java:82)
+	at com.example.billing.service.InvoiceService.closeInvoice(InvoiceService.java:212)
+Caused by: java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available, request timed out after 30002ms (total=20, active=20, idle=0, waiting=9)
+	at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:197)
+	... 38 common frames omitted

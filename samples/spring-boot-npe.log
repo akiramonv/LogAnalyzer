@@ -1,0 +1,18 @@
+2026-08-09T10:00:00.101+03:00  INFO 12345 --- [order-service] [           main] [                                                 ] c.e.o.OrderServiceApplication            : Starting OrderServiceApplication using Java 21.0.12
+2026-08-09T10:00:03.402+03:00  INFO 12345 --- [order-service] [           main] [                                                 ] c.e.o.OrderServiceApplication            : Started OrderServiceApplication in 3.512 seconds (process running for 4.01)
+2026-08-09T10:04:11.204+03:00  INFO 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.web.OrderController                : Получен запрос POST /api/v1/orders userId=4417 sessionId=S-90210
+2026-08-09T10:04:11.219+03:00 DEBUG 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.service.OrderService               : Валидация заказа orderId=88213 items=3
+2026-08-09T10:04:11.247+03:00  INFO 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.service.PricingService             : Расчёт стоимости заказа orderId=88213
+2026-08-09T10:04:11.256+03:00  WARN 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.service.PricingService             : Профиль скидок для клиента не найден, продолжаем без него customerId=4417
+2026-08-09T10:04:11.261+03:00 ERROR 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.web.OrderController                : Не удалось обработать заказ orderId=88213
+java.lang.NullPointerException: Cannot invoke "com.example.orders.model.DiscountProfile.rate()" because "profile" is null
+	at com.example.orders.service.PricingService.applyDiscount(PricingService.java:88)
+	at com.example.orders.service.PricingService.calculate(PricingService.java:52)
+	at com.example.orders.service.OrderService.createOrder(OrderService.java:134)
+	at com.example.orders.web.OrderController.create(OrderController.java:61)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:255)
+	... 62 common frames omitted
+2026-08-09T10:04:11.268+03:00  INFO 12345 --- [order-service] [nio-8080-exec-3] [8f3c2a1b4d5e6f70,4b2a9c1d3e5f7a80] c.e.o.web.OrderController                : Ответ POST /api/v1/orders status=500 duration=64ms
+2026-08-09T10:06:02.881+03:00  INFO 12345 --- [order-service] [nio-8080-exec-5] [1c7d9e2f3a4b5c60,7e8f9a0b1c2d3e40] c.e.o.web.OrderController                : Получен запрос GET /api/v1/orders/88214 userId=5120
+2026-08-09T10:06:02.913+03:00  INFO 12345 --- [order-service] [nio-8080-exec-5] [1c7d9e2f3a4b5c60,7e8f9a0b1c2d3e40] c.e.o.web.OrderController                : Ответ GET /api/v1/orders/88214 status=200 duration=32ms

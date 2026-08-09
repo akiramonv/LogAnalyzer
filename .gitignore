@@ -1,0 +1,25 @@
+# Сборка
+build/
+out/
+bin/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Gradle
+.gradle/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# Отчёты и временные файлы анализатора
+report.json
+report.html
+report.txt
+*.log.analysis
+
+# ОС
+.DS_Store
+Thumbs.db

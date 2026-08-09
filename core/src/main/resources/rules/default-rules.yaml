@@ -1,0 +1,922 @@
+name: default
+description: >-
+  Встроенные правила анализа логов Java/Spring-приложений.
+  Каждое правило помечает событие (annotate) и/или выдвигает гипотезу о причине сбоя (cause).
+  Файл можно скопировать, отредактировать и подключить ключом --rules.
+
+rules:
+
+  # ------------------------------------------------------------------ #
+  # Ошибки прикладного кода                                            #
+  # ------------------------------------------------------------------ #
+
+  - name: null-pointer
+    description: Обращение к null-ссылке
+    priority: 50
+    when:
+      exceptionType: '(^|\.)NullPointerException$'
+    annotate:
+      - type: EXCEPTION
+        label: NullPointerException
+    cause:
+      title: Обращение к null-ссылке (NullPointerException)
+      description: >-
+        Код обратился к полю или методу объекта, который равен null.
+        Смотрите верхний кадр стека — там находится место обращения.
+      category: code
+      confidence: 0.85
+      recommendation: >-
+        Проверьте источник значения: незаполненное поле DTO, отсутствующая запись в БД,
+        не сработавшая инъекция зависимости или ответ внешнего сервиса без ожидаемого поля.
+
+  - name: class-cast
+    description: Некорректное приведение типа
+    priority: 40
+    when:
+      exceptionType: '(^|\.)ClassCastException$'
+    annotate:
+      - type: EXCEPTION
+        label: ClassCastException
+    cause:
+      title: Некорректное приведение типа (ClassCastException)
+      category: code
+      confidence: 0.8
+      recommendation: Проверьте фактический тип объекта и generics в месте приведения.
+
+  - name: index-out-of-bounds
+    description: Выход за границы массива или коллекции
+    priority: 40
+    when:
+      exceptionType: 'IndexOutOfBoundsException'
+    annotate:
+      - type: EXCEPTION
+        label: IndexOutOfBoundsException
+    cause:
+      title: Выход за границы коллекции/массива
+      category: code
+      confidence: 0.8
+      recommendation: Проверьте расчёт индексов и предположения о размере входных данных.
+
+  - name: number-format
+    description: Ошибка разбора числа
+    priority: 45
+    when:
+      exceptionType: '(^|\.)NumberFormatException$'
+    annotate:
+      - type: VALIDATION
+        label: NumberFormatException
+    cause:
+      title: Нечисловое значение там, где ожидалось число
+      description: Строка не может быть преобразована в число — типично для параметров запроса и полей JSON.
+      category: validation
+      confidence: 0.85
+      recommendation: Добавьте валидацию входного параметра и понятное сообщение об ошибке (HTTP 400).
+
+  - name: illegal-argument
+    description: Некорректный аргумент
+    priority: 30
+    when:
+      exceptionType: '(^|\.)IllegalArgumentException$'
+    annotate:
+      - type: VALIDATION
+        label: IllegalArgumentException
+    cause:
+      title: Метод получил недопустимый аргумент (IllegalArgumentException)
+      category: validation
+      confidence: 0.75
+      recommendation: Проверьте контракт метода и валидацию данных на границе приложения.
+
+  - name: illegal-state
+    description: Недопустимое состояние объекта
+    priority: 30
+    when:
+      exceptionType: '(^|\.)IllegalStateException$'
+    annotate:
+      - type: EXCEPTION
+        label: IllegalStateException
+    cause:
+      title: Объект оказался в недопустимом состоянии (IllegalStateException)
+      category: code
+      confidence: 0.7
+      recommendation: Проверьте порядок вызовов и жизненный цикл компонента.
+
+  - name: concurrent-modification
+    description: Одновременное изменение коллекции
+    priority: 45
+    when:
+      exceptionType: 'ConcurrentModificationException'
+    annotate:
+      - type: EXCEPTION
+        label: ConcurrentModificationException
+    cause:
+      title: Коллекция изменена во время обхода
+      category: concurrency
+      confidence: 0.85
+      recommendation: Используйте итератор с remove(), copy-on-write коллекции или синхронизацию.
+
+  - name: stack-overflow
+    description: Переполнение стека
+    priority: 60
+    when:
+      exceptionType: 'StackOverflowError'
+    annotate:
+      - type: RESOURCE
+        label: StackOverflowError
+    cause:
+      title: Бесконечная рекурсия (StackOverflowError)
+      category: code
+      confidence: 0.9
+      recommendation: Найдите повторяющийся фрагмент в стеке — он показывает рекурсивный цикл.
+
+  # ------------------------------------------------------------------ #
+  # Ресурсы JVM                                                        #
+  # ------------------------------------------------------------------ #
+
+  - name: out-of-memory-heap
+    description: Нехватка heap-памяти
+    priority: 90
+    when:
+      anyMessageRegex:
+        - 'OutOfMemoryError: Java heap space'
+        - 'GC overhead limit exceeded'
+    annotate:
+      - type: RESOURCE
+        label: Нехватка heap-памяти
+    cause:
+      title: Исчерпана heap-память JVM (OutOfMemoryError)
+      description: >-
+        Приложению не хватило heap. Обычные причины — утечка, выгрузка слишком большого
+        объёма данных из БД в память, неограниченный кэш или слишком маленький -Xmx.
+      category: resource
+      confidence: 0.95
+      recommendation: >-
+        Снимите heap dump (-XX:+HeapDumpOnOutOfMemoryError), проверьте пагинацию выборок
+        и размеры кэшей, при необходимости увеличьте -Xmx.
+
+  - name: out-of-memory-other
+    description: Прочие виды OutOfMemoryError
+    priority: 88
+    when:
+      anyMessageRegex:
+        - 'OutOfMemoryError: Metaspace'
+        - 'OutOfMemoryError: unable to create( new)? native thread'
+        - 'OutOfMemoryError: Direct buffer memory'
+    annotate:
+      - type: RESOURCE
+        label: OutOfMemoryError
+    cause:
+      title: Исчерпан ресурс JVM (Metaspace/потоки/direct memory)
+      category: resource
+      confidence: 0.9
+      recommendation: >-
+        Для Metaspace — проверьте динамическую генерацию классов; для потоков — размер пулов;
+        для direct memory — настройки Netty/NIO и -XX:MaxDirectMemorySize.
+
+  - name: thread-pool-rejected
+    description: Пул потоков отверг задачу
+    priority: 70
+    when:
+      exceptionType: 'RejectedExecutionException'
+    annotate:
+      - type: RESOURCE
+        label: Пул потоков переполнен
+    cause:
+      title: Пул потоков не принимает новые задачи
+      category: resource
+      confidence: 0.85
+      recommendation: Проверьте размер пула и очереди, а также длительность выполняемых задач.
+
+  - name: too-many-open-files
+    description: Исчерпан лимит файловых дескрипторов
+    priority: 80
+    when:
+      messageRegex: 'Too many open files'
+    annotate:
+      - type: RESOURCE
+        label: Лимит файловых дескрипторов
+    cause:
+      title: Исчерпан лимит открытых файлов/сокетов
+      category: resource
+      confidence: 0.9
+      recommendation: Проверьте закрытие ресурсов (try-with-resources) и лимит ulimit -n.
+
+  - name: no-disk-space
+    description: Закончилось место на диске
+    priority: 85
+    when:
+      messageRegex: 'No space left on device'
+    annotate:
+      - type: RESOURCE
+        label: Нет места на диске
+    cause:
+      title: Закончилось свободное место на диске
+      category: infrastructure
+      confidence: 0.95
+      recommendation: Освободите место, проверьте ротацию логов и временные файлы.
+
+  # ------------------------------------------------------------------ #
+  # База данных                                                         #
+  # ------------------------------------------------------------------ #
+
+  - name: hikari-pool-timeout
+    description: Исчерпан пул соединений HikariCP
+    priority: 85
+    when:
+      messageRegex: 'Connection is not available, request timed out after'
+    annotate:
+      - type: DATABASE
+        label: Пул соединений исчерпан
+      - type: TIMEOUT
+        label: Ожидание соединения к БД
+    cause:
+      title: Исчерпан пул соединений к базе данных
+      description: >-
+        Все соединения заняты дольше, чем connectionTimeout. Обычно это следствие долгих
+        транзакций, отсутствия индексов или блокировок, а не малого размера пула.
+      category: database
+      confidence: 0.9
+      recommendation: >-
+        Найдите долгие запросы и транзакции, проверьте, не удерживается ли соединение
+        во время внешних вызовов; при необходимости увеличьте maximumPoolSize.
+
+  - name: db-deadlock
+    description: Взаимная блокировка в БД
+    priority: 85
+    when:
+      anyMessageRegex:
+        - 'deadlock detected'
+        - 'Deadlock found when trying to get lock'
+        - 'DeadlockLoserDataAccessException'
+    annotate:
+      - type: DATABASE
+        label: Deadlock
+      - type: TRANSACTION
+        label: Взаимная блокировка
+    cause:
+      title: Взаимная блокировка транзакций (deadlock)
+      category: database
+      confidence: 0.9
+      recommendation: Приведите порядок обновления таблиц/строк к единому во всех транзакциях.
+
+  - name: db-lock-timeout
+    description: Таймаут ожидания блокировки
+    priority: 80
+    when:
+      anyMessageRegex:
+        - 'Lock wait timeout exceeded'
+        - 'could not obtain lock'
+        - 'CannotAcquireLockException'
+    annotate:
+      - type: DATABASE
+        label: Таймаут блокировки
+      - type: TIMEOUT
+        label: Ожидание блокировки строки
+    cause:
+      title: Транзакция не дождалась освобождения блокировки
+      category: database
+      confidence: 0.85
+      recommendation: Сократите длительность транзакций и проверьте конкурирующие обновления тех же строк.
+
+  - name: db-duplicate-key
+    description: Нарушение уникальности
+    priority: 80
+    when:
+      anyMessageRegex:
+        - 'duplicate key value violates unique constraint'
+        - 'DuplicateKeyException'
+        - 'Duplicate entry .* for key'
+    annotate:
+      - type: DATABASE
+        label: Нарушение уникальности
+    cause:
+      title: Попытка вставить дубликат по уникальному ключу
+      category: database
+      confidence: 0.9
+      recommendation: >-
+        Проверьте идемпотентность операции: повторная обработка сообщения/запроса
+        или гонка двух параллельных вставок.
+
+  - name: db-integrity-violation
+    description: Нарушение целостности данных
+    priority: 70
+    when:
+      exceptionType: 'DataIntegrityViolationException|ConstraintViolationException'
+    annotate:
+      - type: DATABASE
+        label: Нарушение ограничения БД
+    cause:
+      title: Нарушено ограничение целостности БД
+      category: database
+      confidence: 0.8
+      recommendation: Проверьте внешние ключи, NOT NULL и уникальные индексы для сохраняемой сущности.
+
+  - name: jpa-lazy-init
+    description: Обращение к ленивой коллекции вне сессии
+    priority: 75
+    when:
+      exceptionType: 'LazyInitializationException'
+    annotate:
+      - type: DATABASE
+        label: LazyInitializationException
+    cause:
+      title: Обращение к ленивому полю вне открытой сессии Hibernate
+      category: database
+      confidence: 0.9
+      recommendation: >-
+        Используйте JOIN FETCH, @EntityGraph или DTO-проекцию вместо обращения
+        к ленивой связи за пределами транзакции.
+
+  - name: jpa-optimistic-lock
+    description: Конфликт оптимистичной блокировки
+    priority: 75
+    when:
+      exceptionType: 'OptimisticLockingFailureException|OptimisticLockException|StaleObjectStateException'
+    annotate:
+      - type: TRANSACTION
+        label: Оптимистичная блокировка
+    cause:
+      title: Сущность изменена параллельно (конфликт версии)
+      category: database
+      confidence: 0.85
+      recommendation: Добавьте повтор операции с перечитыванием сущности или пересмотрите гранулярность блокировок.
+
+  - name: tx-rollback
+    description: Откат транзакции
+    priority: 60
+    when:
+      exceptionType: 'UnexpectedRollbackException|TransactionSystemException|TransactionTimedOutException'
+    annotate:
+      - type: TRANSACTION
+        label: Откат транзакции
+    cause:
+      title: Транзакция откатилась
+      description: >-
+        Часто это лишь следствие: настоящая ошибка произошла внутри вложенного метода
+        и пометила транзакцию как rollback-only.
+      category: database
+      confidence: 0.6
+      recommendation: Ищите первое исключение внутри транзакции — оно и есть причина.
+
+  - name: sql-exception
+    description: Общая ошибка SQL
+    priority: 40
+    when:
+      exceptionType: 'SQLException|PSQLException|SQLSyntaxErrorException|JdbcSQLException'
+    annotate:
+      - type: DATABASE
+        label: Ошибка SQL
+    cause:
+      title: Ошибка при выполнении SQL-запроса
+      category: database
+      confidence: 0.65
+      recommendation: Проверьте текст запроса, схему БД и права пользователя.
+
+  # ------------------------------------------------------------------ #
+  # Сеть и внешние вызовы                                              #
+  # ------------------------------------------------------------------ #
+
+  - name: socket-timeout
+    description: Таймаут чтения ответа
+    priority: 85
+    when:
+      anyMessageRegex:
+        - 'SocketTimeoutException'
+        - 'Read timed out'
+        - 'ReadTimeoutException'
+        - 'timeout of \d+ ?ms exceeded'
+    annotate:
+      - type: TIMEOUT
+        label: Таймаут ответа внешней системы
+      - type: EXTERNAL_CALL
+        label: Внешний вызов
+    cause:
+      title: Внешняя система не ответила за отведённое время
+      description: Соединение установлено, но ответ не пришёл до истечения read timeout.
+      category: integration
+      confidence: 0.85
+      recommendation: >-
+        Проверьте здоровье вызываемого сервиса и величину read timeout; убедитесь,
+        что таймаут меньше времени ожидания вышестоящего вызова.
+
+  - name: connect-timeout
+    description: Таймаут установки соединения
+    priority: 85
+    when:
+      anyMessageRegex:
+        - 'ConnectTimeoutException'
+        - 'connect timed out'
+        - 'Connection timed out'
+    annotate:
+      - type: TIMEOUT
+        label: Таймаут подключения
+      - type: EXTERNAL_CALL
+        label: Внешний вызов
+    cause:
+      title: Не удалось установить соединение с внешней системой
+      category: integration
+      confidence: 0.85
+      recommendation: Проверьте доступность хоста и порта, сетевые политики и DNS.
+
+  - name: connection-refused
+    description: Соединение отклонено
+    priority: 85
+    when:
+      anyMessageRegex:
+        - 'Connection refused'
+        - 'ConnectException'
+    annotate:
+      - type: EXTERNAL_CALL
+        label: Соединение отклонено
+    cause:
+      title: Целевой сервис недоступен (connection refused)
+      category: integration
+      confidence: 0.9
+      recommendation: Сервис не слушает порт или упал — проверьте его состояние и адрес подключения.
+
+  - name: unknown-host
+    description: Не разрешается имя хоста
+    priority: 85
+    when:
+      exceptionType: 'UnknownHostException'
+    annotate:
+      - type: EXTERNAL_CALL
+        label: Ошибка DNS
+    cause:
+      title: Не удалось разрешить имя хоста
+      category: infrastructure
+      confidence: 0.9
+      recommendation: Проверьте адрес в конфигурации, DNS и сетевую доступность из окружения.
+
+  - name: ssl-error
+    description: Ошибка TLS
+    priority: 80
+    when:
+      anyMessageRegex:
+        - 'SSLHandshakeException'
+        - 'PKIX path building failed'
+        - 'certificate_unknown'
+        - 'CertificateExpiredException'
+    annotate:
+      - type: SECURITY
+        label: Ошибка TLS
+    cause:
+      title: Не удалось установить защищённое соединение (TLS)
+      category: infrastructure
+      confidence: 0.85
+      recommendation: Проверьте срок действия сертификата и наличие корневого CA в truststore.
+
+  - name: feign-retryable
+    description: Ошибка вызова через Feign
+    priority: 70
+    when:
+      exceptionType: 'RetryableException|FeignException'
+    annotate:
+      - type: EXTERNAL_CALL
+        label: Ошибка Feign-клиента
+    cause:
+      title: Сбой вызова внешнего сервиса через Feign
+      category: integration
+      confidence: 0.7
+      recommendation: Посмотрите вложенную причину — таймаут, отказ соединения или ошибочный ответ.
+
+  - name: rest-resource-access
+    description: Ошибка RestTemplate/WebClient
+    priority: 70
+    when:
+      exceptionType: 'ResourceAccessException|WebClientRequestException'
+    annotate:
+      - type: EXTERNAL_CALL
+        label: Ошибка HTTP-клиента
+    cause:
+      title: Сбой при обращении к внешнему HTTP-сервису
+      category: integration
+      confidence: 0.7
+      recommendation: Проверьте вложенное исключение — обычно там таймаут или отказ соединения.
+
+  - name: http-server-error
+    description: Внешний сервис вернул 5xx
+    priority: 65
+    when:
+      httpStatusClass: 5xx
+    annotate:
+      - type: HTTP_SERVER_ERROR
+        label: Ответ 5xx
+    cause:
+      title: Внешний сервис вернул ошибку 5xx
+      category: integration
+      confidence: 0.7
+      recommendation: Ищите причину в логах вызываемого сервиса по тому же traceId.
+
+  - name: http-client-error
+    description: Ответ 4xx
+    priority: 55
+    when:
+      httpStatusClass: 4xx
+    annotate:
+      - type: HTTP_CLIENT_ERROR
+        label: Ответ 4xx
+    cause:
+      title: Запрос отклонён как некорректный (4xx)
+      category: integration
+      confidence: 0.6
+      recommendation: Проверьте параметры, заголовки и авторизацию запроса.
+
+  # ------------------------------------------------------------------ #
+  # Отказоустойчивость                                                  #
+  # ------------------------------------------------------------------ #
+
+  - name: circuit-breaker-open
+    description: Circuit breaker разомкнут
+    priority: 80
+    when:
+      anyMessageRegex:
+        - 'CircuitBreaker ''[^'']+'' is OPEN'
+        - 'CallNotPermittedException'
+        - 'circuit breaker is open'
+    annotate:
+      - type: RESILIENCE
+        label: Circuit breaker OPEN
+    cause:
+      title: Вызовы блокируются разомкнутым circuit breaker
+      description: Предохранитель разомкнулся из-за серии предыдущих ошибок — искать нужно их.
+      category: integration
+      confidence: 0.75
+      recommendation: Найдите ошибки, которые привели к размыканию, в логах до этого момента.
+
+  - name: retry-attempt
+    description: Повторная попытка
+    priority: 50
+    when:
+      anyMessageRegex:
+        - 'Retr(y|ying|ied) attempt'
+        - 'Retrying .* attempt \d+'
+        - 'attempt \d+ of \d+'
+        - 'Backing off for \d+'
+    annotate:
+      - type: RETRY
+        label: Повторная попытка
+
+  - name: rate-limited
+    description: Превышен лимит запросов
+    priority: 70
+    when:
+      anyMessageRegex:
+        - 'RequestNotPermitted'
+        - 'Too Many Requests'
+        - 'rate limit exceeded'
+    annotate:
+      - type: RESILIENCE
+        label: Ограничение частоты запросов
+    cause:
+      title: Сработало ограничение частоты запросов (rate limit)
+      category: integration
+      confidence: 0.8
+      recommendation: Снизьте частоту вызовов, добавьте backoff или согласуйте квоту с владельцем API.
+
+  - name: bulkhead-full
+    description: Bulkhead заполнен
+    priority: 70
+    when:
+      exceptionType: 'BulkheadFullException'
+    annotate:
+      - type: RESILIENCE
+        label: Bulkhead заполнен
+    cause:
+      title: Исчерпан лимит параллельных вызовов (bulkhead)
+      category: integration
+      confidence: 0.8
+      recommendation: Проверьте длительность вызовов и лимит maxConcurrentCalls.
+
+  # ------------------------------------------------------------------ #
+  # Spring: контекст и конфигурация                                     #
+  # ------------------------------------------------------------------ #
+
+  - name: bean-creation-failure
+    description: Не удалось создать бин
+    priority: 85
+    when:
+      exceptionType: 'BeanCreationException|BeanInstantiationException|ApplicationContextException'
+    annotate:
+      - type: CONFIGURATION
+        label: Ошибка создания бина
+    cause:
+      title: Не удалось поднять контекст Spring — ошибка создания бина
+      category: configuration
+      confidence: 0.8
+      recommendation: Смотрите самый глубокий Caused by — там настоящая причина отказа.
+
+  - name: no-such-bean
+    description: Бин не найден
+    priority: 85
+    when:
+      exceptionType: 'NoSuchBeanDefinitionException|UnsatisfiedDependencyException'
+    annotate:
+      - type: CONFIGURATION
+        label: Отсутствует зависимость
+    cause:
+      title: Не найден требуемый бин
+      category: configuration
+      confidence: 0.85
+      recommendation: >-
+        Проверьте сканирование пакетов, профили Spring и условия @ConditionalOn*
+        для отсутствующего компонента.
+
+  - name: placeholder-unresolved
+    description: Не разрешено свойство конфигурации
+    priority: 85
+    when:
+      messageRegex: 'Could not resolve placeholder'
+    annotate:
+      - type: CONFIGURATION
+        label: Отсутствует свойство
+    cause:
+      title: В конфигурации отсутствует обязательное свойство
+      category: configuration
+      confidence: 0.9
+      recommendation: Задайте свойство в application.yml, переменных окружения или конфиг-сервере.
+
+  - name: port-in-use
+    description: Порт занят
+    priority: 90
+    when:
+      anyMessageRegex:
+        - 'Port \d+ was already in use'
+        - 'Address already in use'
+        - 'BindException'
+    annotate:
+      - type: CONFIGURATION
+        label: Порт занят
+    cause:
+      title: Порт приложения уже занят другим процессом
+      category: infrastructure
+      confidence: 0.95
+      recommendation: Освободите порт или задайте другой через server.port.
+
+  - name: class-not-found
+    description: Класс не найден
+    priority: 85
+    when:
+      exceptionType: 'ClassNotFoundException|NoClassDefFoundError'
+    annotate:
+      - type: CONFIGURATION
+        label: Класс отсутствует в classpath
+    cause:
+      title: Отсутствует класс в classpath
+      category: dependencies
+      confidence: 0.85
+      recommendation: Проверьте зависимости сборки и конфликт версий (gradle dependencies / mvn dependency:tree).
+
+  - name: no-such-method
+    description: Несовместимость версий библиотек
+    priority: 85
+    when:
+      exceptionType: 'NoSuchMethodError|NoSuchFieldError|IncompatibleClassChangeError'
+    annotate:
+      - type: CONFIGURATION
+        label: Конфликт версий библиотек
+    cause:
+      title: Конфликт версий зависимостей
+      description: Класс найден, но его сигнатуры не совпадают с ожидаемыми — в classpath две разные версии библиотеки.
+      category: dependencies
+      confidence: 0.9
+      recommendation: Найдите дублирующиеся версии в дереве зависимостей и зафиксируйте одну.
+
+  # ------------------------------------------------------------------ #
+  # Безопасность и валидация                                            #
+  # ------------------------------------------------------------------ #
+
+  - name: authentication-failed
+    description: Ошибка аутентификации
+    priority: 70
+    when:
+      anyMessageRegex:
+        - 'BadCredentialsException'
+        - 'AuthenticationException'
+        - 'Full authentication is required'
+        - 'Unauthorized'
+    annotate:
+      - type: SECURITY
+        label: Ошибка аутентификации
+    cause:
+      title: Запрос не прошёл аутентификацию
+      category: security
+      confidence: 0.75
+      recommendation: Проверьте наличие и срок действия токена, а также настройки security-фильтров.
+
+  - name: access-denied
+    description: Доступ запрещён
+    priority: 70
+    when:
+      anyMessageRegex:
+        - 'AccessDeniedException'
+        - 'Access is denied'
+        - 'Forbidden'
+    annotate:
+      - type: SECURITY
+        label: Доступ запрещён
+    cause:
+      title: Недостаточно прав для операции
+      category: security
+      confidence: 0.75
+      recommendation: Проверьте роли и права пользователя, а также правила авторизации.
+
+  - name: jwt-expired
+    description: Истёкший JWT
+    priority: 75
+    when:
+      anyMessageRegex:
+        - 'ExpiredJwtException'
+        - 'JWT expired'
+        - 'token has expired'
+    annotate:
+      - type: SECURITY
+        label: Истёк срок действия токена
+    cause:
+      title: Срок действия токена истёк
+      category: security
+      confidence: 0.85
+      recommendation: Обновите токен (refresh) и проверьте рассинхронизацию часов между сервисами.
+
+  - name: validation-failed
+    description: Ошибка валидации запроса
+    priority: 65
+    when:
+      exceptionType: 'MethodArgumentNotValidException|BindException|ValidationException'
+    annotate:
+      - type: VALIDATION
+        label: Ошибка валидации
+    cause:
+      title: Входные данные не прошли валидацию
+      category: validation
+      confidence: 0.8
+      recommendation: Сверьте контракт API с фактически присланным телом запроса.
+
+  - name: json-parse-error
+    description: Ошибка разбора JSON
+    priority: 70
+    when:
+      exceptionType: 'JsonParseException|JsonMappingException|HttpMessageNotReadableException|MismatchedInputException'
+    annotate:
+      - type: VALIDATION
+        label: Ошибка разбора JSON
+    cause:
+      title: Некорректный или несовместимый JSON
+      category: integration
+      confidence: 0.85
+      recommendation: >-
+        Сравните структуру полученного JSON с DTO: изменённое поле контракта —
+        частая причина после релиза смежного сервиса.
+
+  # ------------------------------------------------------------------ #
+  # Очереди и кэш                                                       #
+  # ------------------------------------------------------------------ #
+
+  - name: kafka-timeout
+    description: Таймаут отправки в Kafka
+    priority: 75
+    when:
+      anyMessageRegex:
+        - 'Expiring \d+ record\(s\)'
+        - 'TimeoutException: Topic .* not present in metadata'
+        - 'Failed to send message to topic'
+    annotate:
+      - type: MESSAGING
+        label: Проблема с Kafka
+      - type: TIMEOUT
+        label: Таймаут брокера
+    cause:
+      title: Сообщение не доставлено в Kafka
+      category: messaging
+      confidence: 0.85
+      recommendation: Проверьте доступность брокеров, наличие топика и настройки acks/timeout.
+
+  - name: kafka-rebalance
+    description: Ребалансировка консьюмер-группы
+    priority: 55
+    when:
+      anyMessageRegex:
+        - 'group is rebalancing'
+        - 'Attempt to heartbeat failed'
+        - 'Revoke previously assigned partitions'
+    annotate:
+      - type: MESSAGING
+        label: Ребалансировка Kafka
+    cause:
+      title: Консьюмер выпал из группы (ребалансировка)
+      description: Обработка сообщения заняла больше max.poll.interval.ms, брокер исключил консьюмера из группы.
+      category: messaging
+      confidence: 0.75
+      recommendation: Сократите время обработки батча или увеличьте max.poll.interval.ms / уменьшите max.poll.records.
+
+  - name: amqp-error
+    description: Ошибка RabbitMQ/JMS
+    priority: 70
+    when:
+      exceptionType: 'AmqpException|ListenerExecutionFailedException|JMSException'
+    annotate:
+      - type: MESSAGING
+        label: Ошибка брокера сообщений
+    cause:
+      title: Сбой при работе с брокером сообщений
+      category: messaging
+      confidence: 0.7
+      recommendation: Проверьте доступность брокера, существование очереди и обработчик сообщения.
+
+  - name: redis-connection
+    description: Недоступен Redis
+    priority: 75
+    when:
+      exceptionType: 'RedisConnectionFailureException|JedisConnectionException|RedisCommandTimeoutException'
+    annotate:
+      - type: CACHE
+        label: Ошибка Redis
+    cause:
+      title: Кэш Redis недоступен
+      category: infrastructure
+      confidence: 0.85
+      recommendation: Проверьте состояние Redis и поведение приложения при недоступном кэше (fallback).
+
+  # ------------------------------------------------------------------ #
+  # Жизненный цикл и производительность                                 #
+  # ------------------------------------------------------------------ #
+
+  - name: app-started
+    description: Приложение запущено
+    priority: 10
+    when:
+      messageRegex: 'Started .+ in \d+([.,]\d+)? seconds'
+    annotate:
+      - type: LIFECYCLE
+        label: Приложение запущено
+
+  - name: app-shutdown
+    description: Остановка приложения
+    priority: 10
+    when:
+      anyMessageRegex:
+        - 'Shutting down'
+        - 'Stopping service'
+        - 'Commencing graceful shutdown'
+    annotate:
+      - type: LIFECYCLE
+        label: Остановка приложения
+
+  - name: slow-operation
+    description: Долгая операция
+    priority: 20
+    when:
+      minDurationMs: 3000
+    annotate:
+      - type: SLOW
+        label: Операция дольше 3 секунд
+
+  # ------------------------------------------------------------------ #
+  # Составные сценарии (условие «было раньше в этом же таймлайне»)       #
+  # ------------------------------------------------------------------ #
+
+  - name: error-after-retries
+    description: Ошибка после серии повторов
+    priority: 95
+    when:
+      levelAtLeast: ERROR
+    precededBy:
+      withinSeconds: 120
+      when:
+        anyMessageRegex:
+          - 'Retr(y|ying|ied) attempt'
+          - 'attempt \d+ of \d+'
+    annotate:
+      - type: RETRY
+        label: Ошибка после исчерпания повторов
+    cause:
+      title: Операция окончательно провалилась после серии повторов
+      description: >-
+        Повторы не помогли — значит проблема устойчивая, а не разовый сбой.
+        Смотрите первый неудачный вызов в цепочке.
+      category: integration
+      confidence: 0.7
+      recommendation: Ищите первую ошибку серии — она показывает исходную неисправность.
+
+  - name: error-after-timeout
+    description: Ошибка после таймаута внешнего вызова
+    priority: 95
+    when:
+      levelAtLeast: ERROR
+    precededBy:
+      withinSeconds: 120
+      when:
+        anyMessageRegex:
+          - 'SocketTimeoutException'
+          - 'Read timed out'
+          - 'timed out after'
+          - 'ConnectTimeoutException'
+    annotate:
+      - type: TIMEOUT
+        label: Ошибка вызвана предшествующим таймаутом
+    cause:
+      title: Сбой стал следствием таймаута внешнего вызова
+      category: integration
+      confidence: 0.8
+      recommendation: >-
+        Разбирайтесь с внешней системой, а не с местом падения: приложение упало,
+        не дождавшись ответа.
