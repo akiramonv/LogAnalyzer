@@ -159,6 +159,13 @@ public final class HtmlReportWriter implements ReportWriter {
             out.append("<p class=\"rec\"><b>Что делать:</b> ").append(esc(cause.getRecommendation()))
                     .append("</p>\n");
         }
+        if (!cause.getSteps().isEmpty()) {
+            out.append("<ol class=\"steps\">\n");
+            for (String step : cause.getSteps()) {
+                out.append("<li>").append(esc(step)).append("</li>\n");
+            }
+            out.append("</ol>\n");
+        }
         if (!cause.getEvidence().isEmpty()) {
             out.append("<p class=\"evidence\">Основание: ");
             for (RootCause.Evidence e : cause.getEvidence()) {
@@ -343,6 +350,8 @@ public final class HtmlReportWriter implements ReportWriter {
                 .cause-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
                 .cause .title { font-size: 15px; font-weight: 600; margin: 6px 0; }
                 .cause p { margin: 4px 0; }
+                .steps { margin: 8px 0 4px 20px; padding: 0; }
+                .steps li { margin-bottom: 4px; }
                 .confidence { display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
                 .bar { display: inline-block; width: 120px; height: 8px; border-radius: 4px;
                        background: var(--border); overflow: hidden; }

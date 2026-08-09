@@ -92,6 +92,13 @@ public final class IncidentPromptBuilder {
             sb.append("... ещё ").append(entries.size() - shown).append(" событий опущено\n");
         }
 
+        if (timeline.getRootCause() != null) {
+            sb.append("\nГипотеза анализатора: ").append(timeline.getRootCause().getTitle())
+                    .append(" (уверенность ")
+                    .append(String.format(Locale.ROOT, "%.2f", timeline.getRootCause().getConfidence()))
+                    .append("). Проверь её и уточни или опровергни.\n");
+        }
+
         sb.append("""
 
                 Задание:

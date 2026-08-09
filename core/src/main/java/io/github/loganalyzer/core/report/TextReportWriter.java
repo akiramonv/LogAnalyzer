@@ -140,6 +140,13 @@ public final class TextReportWriter implements ReportWriter {
             if (cause.getRecommendation() != null && !cause.getRecommendation().isBlank()) {
                 out.append("    │ Что делать: ").append(wrap(cause.getRecommendation(), "    │ ")).append('\n');
             }
+            if (!cause.getSteps().isEmpty()) {
+                int step = 0;
+                for (String item : cause.getSteps()) {
+                    out.append("    │   ").append(String.valueOf(++step)).append(". ")
+                            .append(wrap(item, "    │      ")).append('\n');
+                }
+            }
             if (!cause.getEvidence().isEmpty()) {
                 out.append("    │ Основание: ").append(cause.getEvidence().stream()
                         .map(RootCause.Evidence::entryId).collect(Collectors.joining(", "))).append('\n');

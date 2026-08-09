@@ -56,6 +56,16 @@ public final class Rule {
         private String category;
         private double confidence = 0.7;
         private String recommendation;
+        /** Пошаговый план проверки и устранения — попадает в отчёт как нумерованный список. */
+        private java.util.List<String> steps = new java.util.ArrayList<>();
+
+        public java.util.List<String> getSteps() {
+            return steps;
+        }
+
+        public void setSteps(java.util.List<String> v) {
+            this.steps = v == null ? new java.util.ArrayList<>() : v;
+        }
 
         public String getTitle() {
             return title;

@@ -103,15 +103,17 @@ public final class HeuristicRootCauseAnalyzer implements RootCauseAnalyzer {
             confidence += Math.min(0.05, hit.rule().getPriority() / 2000.0);
 
             String key = "rule:" + hit.rule().getName() + ":" + entry.getId();
+            String description = join(spec.getDescription(), describeContext(timeline, entry));
             Candidate candidate = new Candidate(
                     spec.getTitle(),
-                    spec.getDescription(),
+                    description,
                     spec.getCategory(),
                     RootCause.Source.RULE,
                     hit.rule().getName(),
                     spec.getRecommendation(),
                     clamp(confidence),
                     entry);
+            candidate.steps.addAll(spec.getSteps());
             candidates.merge(key, candidate, Candidate::best);
         }
     }
@@ -170,7 +172,7 @@ public final class HeuristicRootCauseAnalyzer implements RootCauseAnalyzer {
 
         Candidate candidate = new Candidate(
                 title,
-                description.toString().trim(),
+                join(description.toString().trim(), describeContext(timeline, entry)),
                 "exception",
                 RootCause.Source.HEURISTIC,
                 null,
@@ -179,6 +181,17 @@ public final class HeuristicRootCauseAnalyzer implements RootCauseAnalyzer {
                         : "Начните разбор с " + appFrame + " — это ближайший кадр прикладного кода.",
                 clamp(confidence),
                 entry);
+        if (appFrame != null) {
+            candidate.steps.add("Откройте " + appFrame.declaringClass() + "." + appFrame.methodName()
+                    + (appFrame.lineNumber() == null ? "" : " (строка " + appFrame.lineNumber() + ")")
+                    + " — там возникло исключение.");
+        }
+        if (wrapped) {
+            candidate.steps.add("Разбирайте самое глубокое звено цепочки — " + root.simpleType()
+                    + "; верхние исключения лишь обёртки над ним.");
+        }
+        candidate.steps.add("Проверьте, при каких входных данных это воспроизводится: "
+                + "загляните в события выше по таймлайну — там видны параметры запроса и предыдущие шаги.");
         candidates.merge("exception:" + entry.getId(), candidate, Candidate::best);
     }
 
@@ -213,13 +226,18 @@ public final class HeuristicRootCauseAnalyzer implements RootCauseAnalyzer {
             }
             Candidate candidate = new Candidate(
                     what,
-                    "Ошибка возникла после этого события; оно наиболее вероятно является пусковым.",
+                    "Ошибка возникла после этого события; оно наиболее вероятно является пусковым. "
+                            + describeContext(timeline, trigger),
                     "cascade",
                     RootCause.Source.HEURISTIC,
                     null,
                     "Проверьте состояние внешней системы или ресурса, задействованного в этом шаге.",
                     clamp(confidence),
                     trigger);
+            candidate.steps.add("Посмотрите логи вызываемой системы за это же время — по тому же traceId, "
+                    + "если сквозная трассировка настроена.");
+            candidate.steps.add("Сверьте таймауты: клиентский должен быть меньше, чем время ожидания "
+                    + "вышестоящего вызова, иначе ошибка расползается по цепочке сервисов.");
             candidate.extraEvidence.add(firstError);
             candidates.merge("trigger:" + trigger.getId(), candidate, Candidate::best);
         }
@@ -235,6 +253,10 @@ public final class HeuristicRootCauseAnalyzer implements RootCauseAnalyzer {
                     "Разбирайте первую ошибку — остальные обычно исчезают вместе с ней.",
                     clamp(0.5),
                     firstError);
+            candidate.steps.add("Начните с события " + firstError.getId()
+                    + " — это первая ошибка цепочки.");
+            candidate.steps.add("Проверьте, не являются ли остальные ошибки её последствиями "
+                    + "(откат транзакции, ответ 5xx клиенту, повторная попытка).");
             timeline.lastError().ifPresent(candidate.extraEvidence::add);
             candidates.merge("cascade:" + firstError.getId(), candidate, Candidate::best);
         }
@@ -290,6 +312,55 @@ public final class HeuristicRootCauseAnalyzer implements RootCauseAnalyzer {
         return exception.getFrames().isEmpty() ? null : exception.getFrames().get(0);
     }
 
+    /**
+     * Описывает обстоятельства инцидента фактами из таймлайна: сколько времени прошло
+     * до сбоя, сколько было повторов, какой сервис. Эти детали в логах есть, но собирать
+     * их вручную по строкам долго — поэтому они выносятся прямо в объяснение.
+     */
+    private static String describeContext(Timeline timeline, TimelineEntry entry) {
+        List<String> facts = new ArrayList<>();
+
+        if (!timeline.getServices().isEmpty()) {
+            facts.add("сервис " + String.join(", ", timeline.getServices()));
+        }
+        if (entry.getSinceStart() != null && entry.getSinceStart().toMillis() > 0) {
+            facts.add("сбой через "
+                    + io.github.loganalyzer.core.timeline.TimelineBuilder.formatDuration(entry.getSinceStart())
+                    + " после начала обработки");
+        }
+        if (entry.getSincePrevious() != null && entry.getSincePrevious().toMillis() >= 1000) {
+            facts.add("перед ним пауза "
+                    + io.github.loganalyzer.core.timeline.TimelineBuilder
+                            .formatDuration(entry.getSincePrevious()));
+        }
+        int retries = timeline.getEntries().stream()
+                .filter(e -> e.hasAnnotation(AnnotationType.RETRY))
+                .mapToInt(TimelineEntry::getRepeatCount)
+                .sum();
+        if (retries > 1) {
+            facts.add("до этого было повторных попыток: " + retries);
+        }
+        if (timeline.getErrorCount() > 1) {
+            facts.add("всего ошибок в цепочке: " + timeline.getErrorCount());
+        }
+        if (facts.isEmpty()) {
+            return "";
+        }
+        String text = String.join(", ", facts);
+        return "Обстоятельства: " + Character.toLowerCase(text.charAt(0)) + text.substring(1) + ".";
+    }
+
+    /** Склеивает непустые фрагменты описания в один абзац. */
+    private static String join(String first, String second) {
+        if (first == null || first.isBlank()) {
+            return second == null ? "" : second;
+        }
+        if (second == null || second.isBlank()) {
+            return first;
+        }
+        return first.trim() + " " + second.trim();
+    }
+
     private static String oneLine(String text) {
         if (text == null) {
             return "";
@@ -312,6 +383,7 @@ public final class HeuristicRootCauseAnalyzer implements RootCauseAnalyzer {
         private final String recommendation;
         private final double confidence;
         private final TimelineEntry anchor;
+        private final List<String> steps = new ArrayList<>();
         private final List<TimelineEntry> extraEvidence = new ArrayList<>();
 
         Candidate(String title, String description, String category, RootCause.Source source,
@@ -338,6 +410,7 @@ public final class HeuristicRootCauseAnalyzer implements RootCauseAnalyzer {
                     .source(source)
                     .rule(rule)
                     .recommendation(recommendation)
+                    .steps(steps)
                     .confidence(adjustedConfidence)
                     .evidence(anchor);
             for (TimelineEntry e : extraEvidence) {

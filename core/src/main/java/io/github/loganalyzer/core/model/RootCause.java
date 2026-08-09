@@ -33,6 +33,8 @@ public final class RootCause {
     private final Source source;
     private final String rule;
     private final String recommendation;
+    /** Конкретные шаги проверки и устранения — по порядку. */
+    private final List<String> steps;
     private final List<Evidence> evidence;
 
     private RootCause(Builder b) {
@@ -43,6 +45,7 @@ public final class RootCause {
         this.source = b.source == null ? Source.HEURISTIC : b.source;
         this.rule = b.rule;
         this.recommendation = b.recommendation;
+        this.steps = List.copyOf(b.steps);
         this.evidence = List.copyOf(b.evidence);
     }
 
@@ -78,6 +81,10 @@ public final class RootCause {
         return recommendation;
     }
 
+    public List<String> getSteps() {
+        return steps;
+    }
+
     public List<Evidence> getEvidence() {
         return evidence;
     }
@@ -96,6 +103,7 @@ public final class RootCause {
         private Source source;
         private String rule;
         private String recommendation;
+        private final List<String> steps = new ArrayList<>();
         private final List<Evidence> evidence = new ArrayList<>();
 
         public Builder title(String v) {
@@ -130,6 +138,20 @@ public final class RootCause {
 
         public Builder recommendation(String v) {
             this.recommendation = v;
+            return this;
+        }
+
+        public Builder step(String v) {
+            if (v != null && !v.isBlank()) {
+                this.steps.add(v.trim());
+            }
+            return this;
+        }
+
+        public Builder steps(List<String> v) {
+            if (v != null) {
+                v.forEach(this::step);
+            }
             return this;
         }
 

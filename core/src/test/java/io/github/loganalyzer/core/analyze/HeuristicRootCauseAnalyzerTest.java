@@ -94,6 +94,29 @@ class HeuristicRootCauseAnalyzerTest {
     }
 
     @Test
+    @DisplayName("Причина содержит развёрнутое объяснение и пошаговый план")
+    void explainsCauseWithSteps() {
+        Timeline timeline = analyze("""
+                2026-08-09T10:00:00 INFO  com.example.Client - POST https://gw.example/v2/charge
+                2026-08-09T10:00:10 WARN  com.example.Client - Retry attempt 1 of 3
+                2026-08-09T10:00:30 ERROR com.example.Client - Вызов не удался
+                org.springframework.web.client.ResourceAccessException: I/O error on POST request
+                \tat com.example.Client.charge(Client.java:74)
+                Caused by: java.net.SocketTimeoutException: Read timed out
+                \tat java.base/java.net.Socket.read(Socket.java:966)
+                """, CorrelationKind.TRACE);
+
+        RootCause cause = timeline.getRootCause();
+        assertThat(cause.getDescription())
+                .contains("read timeout")
+                .contains("Обстоятельства");
+        assertThat(cause.getSteps())
+                .hasSizeGreaterThanOrEqualTo(3)
+                .anyMatch(step -> step.contains("traceId"))
+                .allMatch(step -> step.length() > 20);
+    }
+
+    @Test
     @DisplayName("Без ошибок причина не выдумывается")
     void returnsNothingWithoutErrors() {
         Timeline timeline = analyze("""

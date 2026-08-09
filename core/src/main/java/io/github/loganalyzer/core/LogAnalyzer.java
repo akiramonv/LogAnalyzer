@@ -17,7 +17,7 @@ import io.github.loganalyzer.core.rules.RuleSet;
 import io.github.loganalyzer.core.rules.RuleSetLoader;
 import io.github.loganalyzer.core.timeline.TimelineBuilder;
 
-import jaсva.io.IOException;
+import java.io.IOException;
 import java.io.Reader;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;

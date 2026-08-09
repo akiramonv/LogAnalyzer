@@ -46,6 +46,10 @@ public final class UiServer implements AutoCloseable {
     /** Предел размера присланного фрагмента — защита от случайной отправки гигабайтного файла. */
     private static final int MAX_BODY_BYTES = 64 * 1024 * 1024;
 
+    /** Маппер для служебных ответов интерфейса (правила, шаблоны); отчёт сериализует свой writer. */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private final AnalyzerConfig config;
     private final HttpServer server;
     private final ExecutorService executor;
@@ -61,6 +65,8 @@ public final class UiServer implements AutoCloseable {
         server.setExecutor(executor);
         server.createContext("/", this::handlePage);
         server.createContext("/api/analyze", this::handleAnalyze);
+        server.createContext("/api/rules", this::handleRules);
+        server.createContext("/api/patterns", this::handlePatterns);
     }
 
     public void start() {
@@ -125,6 +131,101 @@ public final class UiServer implements AutoCloseable {
                 send(exchange, 500, "text/plain", "Внутренняя ошибка анализа: " + message(e));
             }
         }
+    }
+
+    /** Список правил анализа — раздел «Правила» в интерфейсе. */
+    private void handleRules(HttpExchange exchange) throws IOException {
+        try (exchange) {
+            List<Map<String, Object>> rules = new java.util.ArrayList<>();
+            for (io.github.loganalyzer.core.rules.Rule rule : new LogAnalyzer(config).getRuleEngine().getRules()) {
+                Map<String, Object> item = new java.util.LinkedHashMap<>();
+                item.put("name", rule.getName());
+                item.put("description", rule.getDescription());
+                item.put("priority", rule.getPriority());
+                if (rule.getCause() != null) {
+                    item.put("cause", rule.getCause().getTitle());
+                    item.put("confidence", rule.getCause().getConfidence());
+                    item.put("recommendation", rule.getCause().getRecommendation());
+                }
+                item.put("condition", describeCondition(rule.getWhen()));
+                rules.add(item);
+            }
+            send(exchange, 200, "application/json", JSON.writeValueAsString(rules));
+        }
+    }
+
+    /** Встроенные шаблоны строк лога и проверка конкретной строки — раздел «Форматы логов». */
+    private void handlePatterns(HttpExchange exchange) throws IOException {
+        try (exchange) {
+            if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                String line = new String(exchange.getRequestBody().readNBytes(64 * 1024), StandardCharsets.UTF_8)
+                        .split("\\R", 2)[0];
+                send(exchange, 200, "application/json", JSON.writeValueAsString(testLine(line)));
+                return;
+            }
+            List<Map<String, Object>> patterns = new java.util.ArrayList<>();
+            for (io.github.loganalyzer.core.parse.LogPattern pattern
+                    : io.github.loganalyzer.core.parse.LogPattern.builtins()) {
+                patterns.add(Map.of("name", pattern.name(), "regex", pattern.pattern().pattern()));
+            }
+            send(exchange, 200, "application/json", JSON.writeValueAsString(patterns));
+        }
+    }
+
+    /** Разбирает одну строку встроенными шаблонами — как команда {@code patterns --test}. */
+    private Map<String, Object> testLine(String line) {
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        if (line == null || line.isBlank()) {
+            result.put("matched", false);
+            return result;
+        }
+        var timestamps = config.toParseOptions().timestampParser();
+        for (io.github.loganalyzer.core.parse.LogPattern pattern
+                : config.toParseOptions().effectivePatterns()) {
+            var hit = pattern.match(line, timestamps);
+            if (hit.isPresent()) {
+                LogEvent event = hit.get().build();
+                result.put("matched", true);
+                result.put("pattern", pattern.name());
+                result.put("timestamp", String.valueOf(event.getTimestamp()));
+                result.put("level", event.getLevel().name());
+                result.put("thread", event.getThread());
+                result.put("logger", event.getLogger());
+                result.put("traceId", event.getTraceId());
+                result.put("service", event.getService());
+                result.put("message", event.getMessage());
+                return result;
+            }
+        }
+        result.put("matched", false);
+        return result;
+    }
+
+    /** Краткое человекочитаемое описание условия правила для интерфейса. */
+    private static String describeCondition(io.github.loganalyzer.core.rules.Condition when) {
+        if (when == null) {
+            return "";
+        }
+        List<String> parts = new java.util.ArrayList<>();
+        if (when.getExceptionType() != null) {
+            parts.add("исключение: " + when.getExceptionType());
+        }
+        if (when.getMessageRegex() != null) {
+            parts.add("сообщение: " + when.getMessageRegex());
+        }
+        if (!when.getAnyMessageRegex().isEmpty()) {
+            parts.add("сообщение: " + String.join(" | ", when.getAnyMessageRegex()));
+        }
+        if (when.getHttpStatusClass() != null) {
+            parts.add("HTTP " + when.getHttpStatusClass());
+        }
+        if (when.getMinDurationMs() != null) {
+            parts.add("дольше " + when.getMinDurationMs() + " мс");
+        }
+        if (when.getLevelAtLeast() != null) {
+            parts.add("уровень ≥ " + when.getLevelAtLeast());
+        }
+        return String.join("; ", parts);
     }
 
     /** Выполняет анализ и возвращает отчёт в запрошенном формате. */

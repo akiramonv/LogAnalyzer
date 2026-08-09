@@ -81,9 +81,40 @@ class UiServerTest {
         assertThat(response.headers().firstValue("Content-Type").orElse(""))
                 .contains("text/html").contains("utf-8");
         assertThat(response.body())
-                .contains("Анализатор логов")
+                .contains("log-analyzer")
+                .contains("Шаг 1 · Откуда взять лог")
                 .contains("id=\"text\"")
-                .contains("Анализировать");
+                .contains("Разобрать лог")
+                .contains("Форматы логов");
+    }
+
+    @Test
+    @DisplayName("Раздел «Правила» отдаёт список правил с условиями и причинами")
+    void servesRules() throws Exception {
+        HttpResponse<String> response = get("/api/rules");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("Content-Type").orElse("")).contains("application/json");
+        assertThat(response.body())
+                .contains("null-pointer")
+                .contains("hikari-pool-timeout")
+                .contains("\"condition\"");
+    }
+
+    @Test
+    @DisplayName("Раздел «Форматы логов» отдаёт шаблоны и проверяет строку")
+    void servesPatterns() throws Exception {
+        HttpResponse<String> list = get("/api/patterns");
+        assertThat(list.statusCode()).isEqualTo(200);
+        assertThat(list.body()).contains("spring-boot").contains("logback");
+
+        HttpResponse<String> probe = post("/api/patterns",
+                "2026-08-09T10:00:00.123+03:00  INFO 1 --- [app] [main] [aaaa,bbbb] c.e.App : Started");
+        assertThat(probe.statusCode()).isEqualTo(200);
+        assertThat(probe.body()).contains("\"matched\":true").contains("spring-boot").contains("Started");
+
+        HttpResponse<String> noMatch = post("/api/patterns", "совершенно посторонняя строка");
+        assertThat(noMatch.body()).contains("\"matched\":false");
     }
 
     @Test
@@ -106,6 +137,8 @@ class UiServerTest {
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.headers().firstValue("Content-Type").orElse("")).contains("application/json");
         assertThat(response.body()).contains("\"rootCause\"").contains("8f3c2a1b");
+        // объяснение причины отдаётся вместе с пошаговым планом — на нём строится блок «Что делать»
+        assertThat(response.body()).contains("\"steps\"").contains("\"description\"");
     }
 
     @Test
