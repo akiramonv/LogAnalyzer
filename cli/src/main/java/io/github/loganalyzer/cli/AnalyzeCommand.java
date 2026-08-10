@@ -11,6 +11,7 @@ import io.github.loganalyzer.core.report.JsonReportWriter;
 import io.github.loganalyzer.core.report.MermaidReportWriter;
 import io.github.loganalyzer.core.report.ReportWriter;
 import io.github.loganalyzer.core.report.TextReportWriter;
+import io.github.loganalyzer.core.search.RequisiteSearch;
 import picocli.CommandLine;
 import picocli.CommandLine.ArgGroup;
 import picocli.CommandLine.Command;
@@ -112,6 +113,11 @@ final class AnalyzeCommand implements Callable<Integer> {
     @Option(names = "--only-failed", description = "Показывать только инциденты, в которых были ошибки.")
     boolean onlyFailed;
 
+    @Option(names = {"--find", "--requisite"}, paramLabel = "ЗНАЧЕНИЕ",
+            description = "Оставить только цепочки, связанные с этим значением: ИНН, id платежа, "
+                    + "номер телефона, ФИО. Можно указывать несколько раз.")
+    List<String> find = new ArrayList<>();
+
     @Option(names = "--top", paramLabel = "N",
             description = "Оставить N самых «тяжёлых» инцидентов (по числу ошибок, затем по длительности).")
     int top;
@@ -184,17 +190,45 @@ final class AnalyzeCommand implements Callable<Integer> {
                 err().println("Не найдено ни одного файла логов по указанным путям.");
                 return LogAnalyzerCli.EXIT_USAGE;
             }
-            events = analyzer.parseFiles(files, report);
+            if (find.isEmpty()) {
+                events = analyzer.parseFiles(files, report);
+            } else {
+                LogAnalyzer.MatchedLines matched = analyzer.parseMatchingLines(files, find, report);
+                events = matched.events();
+                // Ход поиска идёт в поток ошибок: иначе он попал бы в отчёт при `-f json > file`.
+                err().println("Просмотрено строк: " + matched.scannedLines()
+                        + ", отобрано связанных: " + matched.keptLines());
+            }
         }
 
         report = analyzer.analyzeEvents(filterEvents(events), report);
         filterTimelines(report);
+        if (!find.isEmpty()) {
+            reportSearch(RequisiteSearch.apply(report, find));
+        }
         write(report, cfg);
 
         if (failOnError && report.getSummary().getFailedTimelines() > 0) {
             return LogAnalyzerCli.EXIT_INCIDENTS_FOUND;
         }
         return LogAnalyzerCli.EXIT_OK;
+    }
+
+    /** Печатает итог поиска — сколько цепочек нашлось и по какому признаку. */
+    private void reportSearch(RequisiteSearch.Result result) {
+        if (result.isEmpty()) {
+            err().println("По значению " + String.join(", ", find) + " ничего не найдено.");
+            err().println("Проверьте написание либо попробуйте часть значения — поиск идёт по подстроке.");
+            return;
+        }
+        StringBuilder line = new StringBuilder("Найдено: событий с совпадением — ")
+                .append(result.matchedEvents())
+                .append(", цепочек — ").append(result.directChains());
+        if (result.linkedChains() > 0) {
+            line.append(" (и ещё ").append(result.linkedChains())
+                    .append(" связанных по идентификатору операции)");
+        }
+        err().println(line);
     }
 
     /**

@@ -28,7 +28,7 @@ public final class TimestampParser {
     public static final Pattern TIMESTAMP_PREFIX = Pattern.compile(
             "^\\s*(?:\\[)?(" +
             "\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{1,9})?(?:Z|[+-]\\d{2}:?\\d{2})?" +
-            "|\\d{2}[./]\\d{2}[./]\\d{4}[T ]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{1,9})?" +
+            "|\\d{2}[./-]\\d{2}[./-]\\d{4}[T ]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{1,9})?" +
             "|\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d{1,9})?" +
             "|\\d{13}" +
             ")");
@@ -49,6 +49,14 @@ public final class TimestampParser {
 
     private static final DateTimeFormatter EURO_DATE = new DateTimeFormatterBuilder()
             .appendPattern("dd.MM.yyyy")
+            .appendLiteral(' ')
+            .appendPattern("HH:mm:ss")
+            .optionalStart().appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true).optionalEnd()
+            .toFormatter(Locale.ROOT);
+
+    /** Европейская дата через дефис: {@code 10-08-2026 00:00:00.118} (встречается в paylogic). */
+    private static final DateTimeFormatter DASH_DATE = new DateTimeFormatterBuilder()
+            .appendPattern("dd-MM-yyyy")
             .appendLiteral(' ')
             .appendPattern("HH:mm:ss")
             .optionalStart().appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true).optionalEnd()
@@ -131,7 +139,7 @@ public final class TimestampParser {
             }
         }
 
-        for (DateTimeFormatter f : List.of(ISO_LOCAL_FLEX, SPACE_SEPARATED, EURO_DATE, SLASH_DATE)) {
+        for (DateTimeFormatter f : List.of(ISO_LOCAL_FLEX, SPACE_SEPARATED, EURO_DATE, DASH_DATE, SLASH_DATE)) {
             try {
                 return LocalDateTime.parse(s, f).atZone(zone).toInstant();
             } catch (Exception ignored) {

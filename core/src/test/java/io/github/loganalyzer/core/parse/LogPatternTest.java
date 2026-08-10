@@ -135,6 +135,47 @@ class LogPatternTest {
     }
 
     @Test
+    @DisplayName("Лог платёжного API: дата через дефис, поток в скобках, логгер сокращён")
+    void parsesDashDateWithThread() {
+        LogEvent event = parse("10-08-2026 00:02:28.750 [ajp-nio-8809-exec-23] ERROR "
+                + "r.s.p.a.s.s.p.PaymentServiceImpl - Не найдено в очереди external 92df4dcc");
+
+        assertThat(event).isNotNull();
+        assertThat(event.getTimestamp()).isEqualTo("2026-08-10T00:02:28.750Z");
+        assertThat(event.getLevel()).isEqualTo(LogLevel.ERROR);
+        assertThat(event.getThread()).isEqualTo("ajp-nio-8809-exec-23");
+        assertThat(event.getLogger()).isEqualTo("r.s.p.a.s.s.p.PaymentServiceImpl");
+        assertThat(event.getMessage()).startsWith("Не найдено в очереди");
+    }
+
+    @Test
+    @DisplayName("Лог воркера: поле в скобках становится ключом корреляции")
+    void parsesWorkerLineWithCorrelationField() {
+        LogEvent event = parse("00:00:25,564  INFO RMI TCP Connection(21133)-10.122.114.6 "
+                + "[996997565647] - Make onlineVerify: Payment{id=172500367}");
+
+        assertThat(event).isNotNull();
+        assertThat(matchedPatternName("00:00:25,564  INFO RMI TCP Connection(21133)-10.122.114.6 "
+                + "[996997565647] - Make onlineVerify")).isEqualTo("level-thread-ref");
+        assertThat(event.getThread()).isEqualTo("RMI TCP Connection(21133)-10.122.114.6");
+        // Идентификатор в скобках — то, по чему собирается цепочка одной операции
+        assertThat(event.getTraceId()).isEqualTo("996997565647");
+        assertThat(event.getMessage()).isEqualTo("Make onlineVerify: Payment{id=172500367}");
+    }
+
+    @Test
+    @DisplayName("Лог воркера с пустым полем корреляции разбирается как обычная запись")
+    void parsesWorkerLineWithEmptyReference() {
+        LogEvent event = parse("00:00:00,124  INFO UniversalChildWorkerV3-&33:0/1 [] - "
+                + "Next payment: Payment{id=173497766}");
+
+        assertThat(event).isNotNull();
+        assertThat(event.getThread()).isEqualTo("UniversalChildWorkerV3-&33:0/1");
+        assertThat(event.getTraceId()).isNull();
+        assertThat(event.getMessage()).startsWith("Next payment");
+    }
+
+    @Test
     @DisplayName("Шаблоны применяются в порядке от специфичных к общим")
     void appliesSpecificPatternsFirst() {
         List<String> names = LogPattern.builtins().stream().map(LogPattern::name).toList();

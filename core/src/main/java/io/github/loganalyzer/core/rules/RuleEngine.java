@@ -72,6 +72,9 @@ public final class RuleEngine {
                             spec.getLabel() == null ? rule.getDescription() : spec.getLabel(),
                             rule.getName()));
                 }
+                if (rule.isMarkError()) {
+                    entry.markAsError();
+                }
                 hits.add(new RuleHit(rule, entry));
                 if (rule.isStopOnMatch()) {
                     break;

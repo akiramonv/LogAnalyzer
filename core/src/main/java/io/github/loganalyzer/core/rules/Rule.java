@@ -142,6 +142,14 @@ public final class Rule {
     private CauseSpec cause;
     /** Не применять последующие правила к этому событию. */
     private boolean stopOnMatch;
+    /**
+     * Считать событие ошибкой, даже если оно записано на уровне INFO.
+     *
+     * <p>Нужно для бизнес-сбоев: платёжные шлюзы и интеграции часто пишут отказ внешней
+     * системы обычным INFO-сообщением с кодом ответа внутри. Без этой пометки такая цепочка
+     * не считается сбойной, не попадает в {@code --only-failed} и не получает вывода о причине.
+     */
+    private boolean markError;
 
     public String getName() {
         return name;
@@ -213,6 +221,14 @@ public final class Rule {
 
     public void setStopOnMatch(boolean v) {
         this.stopOnMatch = v;
+    }
+
+    public boolean isMarkError() {
+        return markError;
+    }
+
+    public void setMarkError(boolean v) {
+        this.markError = v;
     }
 
     /** @return {@code true} если правило корректно (есть имя и непустое условие). */

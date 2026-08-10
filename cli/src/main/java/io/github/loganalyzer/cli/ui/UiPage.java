@@ -195,6 +195,8 @@ final class UiPage {
                    max-width: 100%; overflow-wrap: anywhere; vertical-align: baseline; }
             .tag.err { background: var(--err-chip); color: var(--err); }
             .tag.warn { background: var(--warn-bg); color: var(--warn); }
+            /* Совпадение с искомым реквизитом: должно быть видно с первого взгляда. */
+            .tag.hit { background: #e3edfb; color: var(--accent); font-weight: 600; }
             details summary { cursor: pointer; color: var(--err); font-size: 12px; font-family: var(--mono); }
             /* width:100% удерживает стек внутри своей колонки: он прокручивается сам,
                а не растягивает таблицу и карточку. */
@@ -287,6 +289,12 @@ final class UiPage {
 
                 <div class="side-top">
                   <div class="step">Шаг 2 · Что показать</div>
+                  <label style="display:block; margin-bottom:10px;">
+                    <span class="lbl">Реквизит: ИНН, id платежа, телефон, ФИО</span>
+                    <input type="text" id="find" placeholder="например 173497766">
+                    <span class="hint">Соберёт цепочку событий по этому значению —
+                      вместе со связанными операциями.</span>
+                  </label>
                   <label class="check"><input type="checkbox" id="onlyFailed" checked>
                     Только инциденты с ошибками</label>
                   <div class="grid-2">
@@ -390,6 +398,7 @@ final class UiPage {
                 const q = new URLSearchParams();
                 q.set('format', format);
                 if (el('onlyFailed').checked) q.set('onlyFailed', 'true');
+                if (el('find').value.trim()) q.set('find', el('find').value.trim());
                 if (el('trace').value.trim()) q.set('trace', el('trace').value.trim());
                 if (el('minLevel').value) q.set('minLevel', el('minLevel').value);
                 if (Number(el('top').value) > 0) q.set('top', el('top').value);
@@ -534,9 +543,10 @@ final class UiPage {
                   let message = '<div>' + esc(oneLine(event));
                   if (entry.repeatCount > 1) message += ' <span class="tag">×' + entry.repeatCount + '</span>';
                   (entry.annotations || []).forEach(function (a) {
-                    const tagCls = a.type === 'EXCEPTION' || a.type === 'ERROR' || a.type === 'HTTP_SERVER_ERROR'
+                    const tagCls = a.type === 'MATCH' ? 'hit'
+                      : (a.type === 'EXCEPTION' || a.type === 'ERROR' || a.type === 'HTTP_SERVER_ERROR'
                       ? 'err' : (a.type === 'WARNING' || a.type === 'TIMEOUT' || a.type === 'RETRY'
-                      || a.type === 'SLOW' ? 'warn' : '');
+                      || a.type === 'SLOW' ? 'warn' : ''));
                     const full = a.label || a.type;
                     const short = full.length > 44 ? full.slice(0, 41) + '…' : full;
                     message += ' <span class="tag ' + tagCls + '" title="'
@@ -760,14 +770,33 @@ final class UiPage {
                 el('m-events').textContent = summary.totalEvents || 0;
 
                 const timelines = lastReport.timelines || [];
+                const requisite = el('find').value.trim();
                 if (!timelines.length) {
-                  content.innerHTML = '<p class="empty">Инцидентов не найдено. '
-                    + 'Попробуйте снять фильтр «только с ошибками» или проверьте формат логов '
-                    + 'в разделе «Форматы логов».</p>';
+                  content.innerHTML = requisite
+                    ? '<p class="empty">По реквизиту <b>' + esc(requisite) + '</b> цепочек не найдено.'
+                      + ' Проверьте написание — поиск идёт по подстроке. Если значение точно есть в логе,'
+                      + ' снимите фильтр «только инциденты с ошибками»: в этой цепочке ошибок может не быть.</p>'
+                    : '<p class="empty">Инцидентов не найдено. '
+                      + 'Попробуйте снять фильтр «только с ошибками» или проверьте формат логов '
+                      + 'в разделе «Форматы логов».</p>';
                   return;
                 }
+                // Шапка поиска: сколько цепочек связано с реквизитом и сколько событий его содержат.
+                let searchNote = '';
+                if (requisite) {
+                  let hits = 0;
+                  timelines.forEach(function (timeline) {
+                    (timeline.entries || []).forEach(function (entry) {
+                      if ((entry.annotations || []).some((a) => a.type === 'MATCH')) hits++;
+                    });
+                  });
+                  searchNote = '<p class="note" style="margin-bottom:14px">Реквизит <b>'
+                    + esc(requisite) + '</b>: цепочек — ' + timelines.length
+                    + ', событий с совпадением — ' + hits
+                    + '. Совпадения помечены в таблице.</p>';
+                }
 
-                content.innerHTML = timelines.map(function (timeline, index) {
+                content.innerHTML = searchNote + timelines.map(function (timeline, index) {
                   const kind = { TRACE: 'traceId', REQUEST: 'requestId', SESSION: 'sessionId',
                                  THREAD: 'поток', FILE: 'источник' }[timeline.correlationKind] || '';
                   const services = (timeline.services || []).join(', ');
@@ -952,6 +981,17 @@ final class UiPage {
                   + 'трассировки нет), схлопнет повторы, пометит таймауты, ретраи и внешние вызовы, '
                   + 'развернёт цепочку <code>Caused by</code> до первопричины и назовёт вероятную причину '
                   + 'с оценкой уверенности.</p>'
+                  + '<h2>Поиск по реквизиту</h2>'
+                  + '<p>Поле «Реквизит» в шаге 2 собирает историю конкретной операции: введите ИНН, '
+                  + 'идентификатор платежа, номер телефона или ФИО — и в отчёт попадут цепочки, '
+                  + 'где это значение встретилось, целиком: со всеми шагами обработки, ответами '
+                  + 'провайдера и выводом о причине. Сами совпадения помечены в таблице.</p>'
+                  + '<p>Если в найденной записи назван идентификатор соседней операции — скажем, '
+                  + 'телефон абонента и номер платежа стоят в одной строке, — её цепочка тоже '
+                  + 'попадёт в отчёт. Именно так по жалобе клиента находится вся история платежа.</p>'
+                  + '<p>Большие файлы читаются в два прохода и отбираются по тексту до разбора, '
+                  + 'поэтому поиск в дневном логе на десятки мегабайт занимает секунды. '
+                  + 'То же самое из консоли: <code>log-analyzer find 173497766 -i optima.log</code>.</p>'
                   + '<h2>Как он учится</h2>'
                   + '<p>Под каждой названной причиной есть вопрос «Причина названа верно?». '
                   + 'Ответ «да» закрепляет версию: в следующий раз такой же сбой начнётся сразу с неё. '

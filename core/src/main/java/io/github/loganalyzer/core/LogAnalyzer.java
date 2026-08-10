@@ -15,6 +15,7 @@ import io.github.loganalyzer.core.model.RootCause;
 import io.github.loganalyzer.core.model.Timeline;
 import io.github.loganalyzer.core.parse.LogIngestor;
 import io.github.loganalyzer.core.parse.ParseOptions;
+import io.github.loganalyzer.core.search.RequisiteFilter;
 import io.github.loganalyzer.core.rules.RuleEngine;
 import io.github.loganalyzer.core.rules.RuleSet;
 import io.github.loganalyzer.core.rules.RuleSetLoader;
@@ -147,6 +148,54 @@ public final class LogAnalyzer {
         return events;
     }
 
+    /** Итог отбора строк по реквизиту: события и сколько строк пришлось просмотреть. */
+    public record MatchedLines(List<LogEvent> events, int scannedLines, int keptLines) {
+    }
+
+    /**
+     * Разбирает только те строки файлов, которые связаны с указанными значениями
+     * (ИНН, идентификатор платежа, номер телефона, ФИО).
+     *
+     * <p>Отбор идёт по тексту, до разбора: дневной лог платёжного шлюза — десятки мегабайт,
+     * и строить таймлайны по всему файлу ради одной операции незачем. Окончательный отбор
+     * цепочек делает {@link io.github.loganalyzer.core.search.RequisiteSearch}.
+     *
+     * @param files  файлы логов
+     * @param values искомые значения
+     * @param report отчёт, куда пишутся предупреждения
+     */
+    public MatchedLines parseMatchingLines(List<Path> files, List<String> values, AnalysisReport report) {
+        AnalysisReport target = report == null ? new AnalysisReport() : report;
+        List<LogEvent> events = new ArrayList<>();
+        int limit = RequisiteFilter.defaultMaxLines();
+        int scanned = 0;
+        int kept = 0;
+
+        for (Path file : files) {
+            RequisiteFilter.Result filtered;
+            try {
+                filtered = RequisiteFilter.of(
+                        file, parseOptions.getCharset(), values, Math.max(0, limit - kept));
+            } catch (IOException e) {
+                target.addWarning("Не удалось прочитать " + file + ": " + e.getMessage());
+                continue;
+            }
+            scanned += filtered.scannedLines();
+            kept += filtered.keptLines();
+            if (filtered.truncated()) {
+                target.addWarning("Слишком много совпадений в " + file + " — взяты первые "
+                        + limit + " строк. Уточните значение поиска.");
+            }
+            if (filtered.isEmpty()) {
+                continue;
+            }
+            target.getInputs().add(file.toString());
+            events.addAll(parseText(filtered.text(), file.toString(), target));
+        }
+        target.getSummary().setFilesAnalyzed(files.size());
+        return new MatchedLines(events, scanned, kept);
+    }
+
     /** Анализирует поток логов (используется для stdin). */
     public AnalysisReport analyzeStream(Reader reader, String sourceName) {
         AnalysisReport report = new AnalysisReport();
@@ -214,7 +263,25 @@ public final class LogAnalyzer {
         result.getSummary().setTimelines(result.getTimelines().size());
         result.getSummary().setFailedTimelines(
                 (int) result.getTimelines().stream().filter(Timeline::isFailed).count());
+        countRuleMarkedErrors(result);
         return result;
+    }
+
+    /**
+     * Добавляет в сводку события, которые признаны ошибками правилами ({@code markError}).
+     * Иначе шапка отчёта показывала бы «ошибок: 0» рядом с цепочкой, где ошибка есть:
+     * отказ внешней системы записан в лог как обычное сообщение.
+     */
+    private static void countRuleMarkedErrors(AnalysisReport report) {
+        int marked = 0;
+        for (Timeline timeline : report.getTimelines()) {
+            for (io.github.loganalyzer.core.model.TimelineEntry entry : timeline.getEntries()) {
+                if (entry.isError() && !entry.getEvent().isError()) {
+                    marked += entry.getRepeatCount();
+                }
+            }
+        }
+        report.getSummary().setErrorEvents(report.getSummary().getErrorEvents() + marked);
     }
 
     private static void fillEventSummary(List<LogEvent> events, AnalysisReport report) {

@@ -30,6 +30,8 @@ public final class TimelineEntry {
     private Duration sinceStart;
     /** Пауза от предыдущего события таймлайна. */
     private Duration sincePrevious;
+    /** Событие признано ошибкой правилом, хотя в логе записано как обычное. */
+    private boolean forcedError;
 
     public TimelineEntry(String id, LogEvent event) {
         this.id = id;
@@ -128,9 +130,20 @@ public final class TimelineEntry {
         return new ArrayList<>(best.values());
     }
 
+    /**
+     * Помечает событие как ошибку, хотя в логе оно записано не как ошибка.
+     *
+     * <p>Используется правилами с {@code markError}: отказ внешней системы часто приходит
+     * обычным INFO-сообщением с кодом внутри, и без такой пометки цепочка не считалась бы
+     * сбойной.
+     */
+    public void markAsError() {
+        this.forcedError = true;
+    }
+
     @JsonIgnore
     public boolean isError() {
-        return event.isError();
+        return forcedError || event.isError();
     }
 
     @Override

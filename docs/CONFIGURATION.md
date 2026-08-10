@@ -69,7 +69,7 @@ log-analyzer patterns --test "строка лога" --regex '^(?<ts>\S+) (?<lev
 
 | Параметр | По умолчанию | Назначение |
 |---|---|---|
-| `builtin` | `true` | Подключать встроенный набор (55 правил). |
+| `builtin` | `true` | Подключать встроенный набор (59 правил). |
 | `files` | — | Пути к своим файлам правил. |
 
 ## Секция `analysis` — вывод о причине
@@ -121,6 +121,22 @@ rules:
     annotate: [ ... ]            # пометки на событии
     cause: { ... }               # гипотеза о причине
     stopOnMatch: false           # не применять остальные правила к этому событию
+    markError: false             # считать событие ошибкой, даже если оно записано как INFO
+```
+
+### `markError` — бизнес-сбои на уровне INFO
+
+Платёжные шлюзы и интеграции часто пишут отказ внешней системы обычным INFO-сообщением
+с кодом внутри ответа. Без этой пометки такая цепочка не считается сбойной: она не попадает
+в `--only-failed` и остаётся без вывода о причине, хотя операция не прошла.
+
+```yaml
+  - name: provider-declined
+    markError: true
+    when:
+      messageRegex: 'provider-error-text'
+    cause:
+      title: Внешняя система отклонила операцию
 ```
 
 ## Блок `when`
@@ -142,6 +158,7 @@ rules:
 | `httpStatusClass` | `1xx`…`5xx` | Класс статусов. |
 | `attributes` | `ключ: regex` | Значения атрибутов и MDC. |
 | `minDurationMs` | число | Минимальная длительность операции. |
+| `minRepeats` | число | Сколько раз событие повторилось в цепочке. Одинаковые события схлопываются в одну запись со счётчиком, поэтому `minRepeats: 50` — это «шаг обработки идёт по кругу». |
 | `caseSensitive` | `false` | Учитывать регистр в регулярных выражениях. |
 
 ## Блок `precededBy`
@@ -165,7 +182,10 @@ annotate:
 
 Доступные типы: `EXCEPTION`, `ERROR`, `WARNING`, `RETRY`, `EXTERNAL_CALL`, `TIMEOUT`, `SLOW`,
 `DATABASE`, `MESSAGING`, `CACHE`, `SECURITY`, `CONFIGURATION`, `RESOURCE`, `RESILIENCE`,
-`TRANSACTION`, `VALIDATION`, `HTTP_CLIENT_ERROR`, `HTTP_SERVER_ERROR`, `LIFECYCLE`, `INFO`.
+`TRANSACTION`, `VALIDATION`, `HTTP_CLIENT_ERROR`, `HTTP_SERVER_ERROR`, `LIFECYCLE`, `MATCH`, `INFO`.
+
+Тип `MATCH` ставится не правилами, а поиском по реквизиту — им помечаются события,
+в которых нашлось искомое значение.
 
 ## Блок `cause`
 

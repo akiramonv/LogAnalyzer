@@ -14,6 +14,7 @@ import io.github.loganalyzer.core.report.HtmlReportWriter;
 import io.github.loganalyzer.core.report.JsonReportWriter;
 import io.github.loganalyzer.core.report.ReportWriter;
 import io.github.loganalyzer.core.report.TextReportWriter;
+import io.github.loganalyzer.core.search.RequisiteSearch;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -396,6 +397,7 @@ public final class UiServer implements AutoCloseable {
         LogAnalyzer analyzer = new LogAnalyzer(cfg);
         AnalysisReport report = new AnalysisReport();
 
+        List<String> find = requisites(query);
         String path = query.get("path");
         List<LogEvent> events;
         if (path != null && !path.isBlank()) {
@@ -404,7 +406,11 @@ public final class UiServer implements AutoCloseable {
             if (files.isEmpty()) {
                 throw new IllegalArgumentException("По пути ничего не найдено: " + path);
             }
-            events = analyzer.parseFiles(files, report);
+            // При поиске по реквизиту читаются только связанные строки — иначе разбор
+            // дневного лога занял бы минуту вместо секунд.
+            events = find.isEmpty()
+                    ? analyzer.parseFiles(files, report)
+                    : analyzer.parseMatchingLines(files, find, report).events();
         } else {
             if (text == null || text.isBlank()) {
                 throw new IllegalArgumentException("Пустой ввод: вставьте фрагмент лога или укажите путь к файлу.");
@@ -416,6 +422,9 @@ public final class UiServer implements AutoCloseable {
         report = analyzer.analyzeEvents(events, report);
         ReportFilters.filterTimelines(
                 report, query.get("trace"), flag(query, "onlyFailed"), intValue(query, "top"));
+        if (!find.isEmpty()) {
+            RequisiteSearch.apply(report, find);
+        }
 
         ZoneId zone = cfg.getParse().getZone() == null || cfg.getParse().getZone().isBlank()
                 ? ZoneId.systemDefault()
@@ -443,6 +452,18 @@ public final class UiServer implements AutoCloseable {
         copy.setLearning(config.getLearning());
         copy.getParse().setZone(zone);
         return copy;
+    }
+
+    /**
+     * Искомые реквизиты из запроса: несколько значений разделяются переводом строки
+     * или точкой с запятой — так в поле интерфейса можно вставить сразу несколько.
+     */
+    private static List<String> requisites(Map<String, String> query) {
+        String value = query.get("find");
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return RequisiteSearch.clean(List.of(value.split("[\\r\\n;]+")));
     }
 
     private static LogLevel level(Map<String, String> query) {

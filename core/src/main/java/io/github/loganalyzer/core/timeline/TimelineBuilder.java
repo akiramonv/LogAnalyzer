@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 /**
@@ -25,6 +26,13 @@ import java.util.List;
  * медленная операция, подозрительная пауза).
  */
 public final class TimelineBuilder {
+
+    /**
+     * Сколько различных недавних записей помнить при схлопывании повторов — длина цикла,
+     * который удаётся распознать. Больше не нужно: осмысленные циклы в логах короткие,
+     * а лишняя память тратится на каждый таймлайн.
+     */
+    private static final int DEDUP_LOOKBACK = 32;
 
     private final TimelineOptions options;
 
@@ -46,23 +54,32 @@ public final class TimelineBuilder {
                 .thenComparingLong(LogEvent::getSequence));
 
         int index = 0;
-        TimelineEntry previous = null;
-        String previousFingerprint = null;
+        // Недавние записи по отпечатку. Цикл опроса («запрос статуса → заголовки → ответ →
+        // и снова через две секунды») даёт не подряд идущие повторы, а чередование нескольких
+        // сообщений: без оглядки на несколько шагов назад таймлайн зависшего платежа
+        // разрастается до десятков тысяч строк вместо пяти с пометкой «×14435».
+        LinkedHashMap<String, TimelineEntry> recent = new LinkedHashMap<>();
 
         for (LogEvent event : ordered) {
             String fingerprint = EventFingerprint.of(event, options.isDedupNormalize());
-            if (options.isDedupEnabled()
-                    && previous != null
-                    && fingerprint.equals(previousFingerprint)
-                    && withinDedupWindow(previous, event)) {
-                previous.addRepeat(event);
-                continue;
+            if (options.isDedupEnabled()) {
+                TimelineEntry same = recent.get(fingerprint);
+                if (same != null && withinDedupWindow(same, event)) {
+                    same.addRepeat(event);
+                    // Обновляем позицию в окне: пока цикл повторяется, он остаётся «недавним»
+                    recent.remove(fingerprint);
+                    recent.put(fingerprint, same);
+                    continue;
+                }
             }
             TimelineEntry entry = new TimelineEntry("e" + (++index), event);
             annotate(entry);
             timeline.getEntries().add(entry);
-            previous = entry;
-            previousFingerprint = fingerprint;
+            recent.remove(fingerprint);
+            recent.put(fingerprint, entry);
+            if (recent.size() > DEDUP_LOOKBACK) {
+                recent.remove(recent.keySet().iterator().next());
+            }
         }
 
         computeOffsets(timeline);

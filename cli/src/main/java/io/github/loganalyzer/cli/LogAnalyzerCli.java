@@ -11,6 +11,7 @@ import picocli.CommandLine.Option;
  * log-analyzer ui
  * log-analyzer analyze -i app.log
  * log-analyzer analyze -i logs/ -f html -o report.html --only-failed
+ * log-analyzer find 173497766 -i optima.log
  * log-analyzer rules --list
  * log-analyzer patterns --test "2026-08-09T10:00:00.123  INFO 1 --- [main] c.e.App : started"
  * log-analyzer prompt -i app.log --trace 8f3c2a
@@ -25,6 +26,7 @@ import picocli.CommandLine.Option;
         subcommands = {
                 UiCommand.class,
                 AnalyzeCommand.class,
+                FindCommand.class,
                 RulesCommand.class,
                 PatternsCommand.class,
                 PromptCommand.class,

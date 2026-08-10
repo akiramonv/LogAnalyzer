@@ -59,6 +59,8 @@ public final class LogIngestor {
     private final TimestampParser timestamps;
     private final JsonLogParser jsonParser;
     private final List<LogPattern> patterns;
+    /** Все шаблоны начинаются с метки времени или скобки — значит, строку-продолжение видно по первому символу. */
+    private final boolean fastContinuationCheck;
 
     /** Сквозной счётчик событий — обеспечивает стабильный порядок при равных метках времени. */
     private long sequence;
@@ -74,6 +76,8 @@ public final class LogIngestor {
         this.timestamps = this.options.timestampParser();
         this.jsonParser = new JsonLogParser(this.timestamps);
         this.patterns = this.options.effectivePatterns();
+        this.fastContinuationCheck = this.patterns.stream()
+                .allMatch(LogPattern::startsWithTimestampOrBracket);
     }
 
     /** Разбирает файл. */
@@ -134,12 +138,15 @@ public final class LogIngestor {
             state.start(LogEvent.builder(), line, lineNo, true);
             return;
         }
-        // 3. Текстовые шаблоны
-        Optional<LogEvent.Builder> matched = matchPatterns(line);
-        if (matched.isPresent()) {
-            flush(state, result);
-            state.start(matched.get(), line, lineNo, false);
-            return;
+        // 3. Текстовые шаблоны. Строку, которая заведомо не может начать запись,
+        //    сюда не пускаем: в больших логах продолжений больше, чем самих записей.
+        if (!fastContinuationCheck || couldStartRecord(line)) {
+            Optional<LogEvent.Builder> matched = matchPatterns(line);
+            if (matched.isPresent()) {
+                flush(state, result);
+                state.start(matched.get(), line, lineNo, false);
+                return;
+            }
         }
         // 4. Продолжение текущей записи
         if (state.current != null) {
@@ -291,6 +298,19 @@ public final class LogIngestor {
      * <p>Порядок здесь важнее скорости: если однажды сработавший общий шаблон получит
      * приоритет, он перехватит и те строки, которые точнее разобрал бы специфичный.
      */
+    /**
+     * Быстрая проверка «строка вообще может быть началом записи»: все встроенные шаблоны
+     * начинаются с метки времени или скобки, поэтому достаточно посмотреть первый символ.
+     * Для продолжений (стек-трейсы, XML- и JSON-тела) это заменяет прогон регулярных выражений.
+     */
+    private static boolean couldStartRecord(String line) {
+        if (line.isEmpty()) {
+            return false;
+        }
+        char first = line.charAt(0);
+        return Character.isDigit(first) || first == '[';
+    }
+
     private Optional<LogEvent.Builder> matchPatterns(String line) {
         if (!TimestampParser.TIMESTAMP_PREFIX.matcher(line).find() && !line.startsWith("[")) {
             // Быстрый отсев: почти все форматы начинаются с метки времени или скобки

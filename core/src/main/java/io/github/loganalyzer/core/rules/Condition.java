@@ -54,6 +54,11 @@ public final class Condition {
     private Map<String, String> attributes = new LinkedHashMap<>();
     /** Минимальная длительность операции в миллисекундах. */
     private Long minDurationMs;
+    /**
+     * Минимальное число повторов события в цепочке: одинаковые события схлопываются
+     * в одну запись со счётчиком, и по нему видно зациклившуюся обработку.
+     */
+    private Integer minRepeats;
     /** Учитывать регистр в регулярных выражениях (по умолчанию нет). */
     private boolean caseSensitive;
 
@@ -164,6 +169,14 @@ public final class Condition {
         this.minDurationMs = v;
     }
 
+    public Integer getMinRepeats() {
+        return minRepeats;
+    }
+
+    public void setMinRepeats(Integer v) {
+        this.minRepeats = v;
+    }
+
     public boolean isCaseSensitive() {
         return caseSensitive;
     }
@@ -179,12 +192,20 @@ public final class Condition {
                 && exceptionMessageRegex == null && loggerRegex == null && threadRegex == null
                 && levelAtLeast == null && level == null && kind == null
                 && httpStatus.isEmpty() && httpStatusClass == null && attributes.isEmpty()
-                && minDurationMs == null;
+                && minDurationMs == null && minRepeats == null;
     }
 
     /** Проверяет условие на событии таймлайна. */
     public boolean matches(TimelineEntry entry) {
-        return entry != null && matches(entry.getEvent());
+        if (entry == null) {
+            return false;
+        }
+        // Число повторов известно только на уровне таймлайна: одинаковые события
+        // схлопнуты в одну запись со счётчиком.
+        if (minRepeats != null && entry.getRepeatCount() < minRepeats) {
+            return false;
+        }
+        return matches(entry.getEvent());
     }
 
     /** Проверяет условие на событии. */

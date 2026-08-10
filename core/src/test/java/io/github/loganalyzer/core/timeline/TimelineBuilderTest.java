@@ -67,6 +67,36 @@ class TimelineBuilderTest {
     }
 
     @Test
+    @DisplayName("Циклический опрос схлопывается, хотя сообщения чередуются")
+    void collapsesRepeatingCycle() {
+        // Зависший платёж опрашивается по кругу: запрос → ответ → снова запрос.
+        // Повторы не идут подряд, но цепочка из тысяч таких шагов нечитаема.
+        Timeline timeline = new TimelineBuilder().build(group(
+                event("2026-08-09T10:00:00Z", LogLevel.INFO, "status request body"),
+                event("2026-08-09T10:00:01Z", LogLevel.INFO, "status response: state=40"),
+                event("2026-08-09T10:00:02Z", LogLevel.INFO, "status request body"),
+                event("2026-08-09T10:00:03Z", LogLevel.INFO, "status response: state=40"),
+                event("2026-08-09T10:00:04Z", LogLevel.INFO, "status request body"),
+                event("2026-08-09T10:00:05Z", LogLevel.INFO, "status response: state=40")));
+
+        assertThat(timeline.getEntries()).hasSize(2);
+        assertThat(timeline.getEntries().get(0).getRepeatCount()).isEqualTo(3);
+        assertThat(timeline.getEntries().get(1).getRepeatCount()).isEqualTo(3);
+        assertThat(timeline.getEventCount()).isEqualTo(6);
+    }
+
+    @Test
+    @DisplayName("Повтор за пределами окна дедупликации остаётся отдельным событием")
+    void keepsRepeatOutsideDedupWindow() {
+        Timeline timeline = new TimelineBuilder(new TimelineOptions()
+                .setDedupWindow(java.time.Duration.ofSeconds(10))).build(group(
+                event("2026-08-09T10:00:00Z", LogLevel.INFO, "Опрос статуса"),
+                event("2026-08-09T10:05:00Z", LogLevel.INFO, "Опрос статуса")));
+
+        assertThat(timeline.getEntries()).hasSize(2);
+    }
+
+    @Test
     @DisplayName("Без нормализации разные номера попыток считаются разными событиями")
     void keepsDistinctEventsWhenNormalizationOff() {
         Timeline timeline = new TimelineBuilder(new TimelineOptions().setDedupNormalize(false)).build(group(

@@ -166,6 +166,59 @@ class RuleEngineTest {
     }
 
     @Test
+    @DisplayName("markError делает цепочку сбойной, хотя отказ записан как INFO")
+    void ruleCanMarkBusinessFailureAsError() {
+        RuleSet set = loader.parse("""
+                name: business
+                rules:
+                  - name: provider-declined
+                    markError: true
+                    when:
+                      messageRegex: 'provider-error-text'
+                    cause:
+                      title: Провайдер отклонил операцию
+                      confidence: 0.8
+                """, "test");
+        Timeline timeline = timelineOf(
+                event("2026-08-09T10:00:00Z", LogLevel.INFO, "status request"),
+                event("2026-08-09T10:00:01Z", LogLevel.INFO,
+                        "response: <attribute name=\"provider-error-text\" value=\"Сбой биллинга\"/>"));
+
+        assertThat(timeline.isFailed()).as("до применения правил ошибок нет").isFalse();
+        List<RuleEngine.RuleHit> hits = new RuleEngine(set).apply(timeline);
+
+        assertThat(hits).hasSize(1);
+        assertThat(timeline.isFailed()).isTrue();
+        assertThat(timeline.firstError()).isPresent();
+    }
+
+    @Test
+    @DisplayName("Условие minRepeats срабатывает только на зацикленной обработке")
+    void matchesByRepeatCount() {
+        RuleSet set = loader.parse("""
+                name: loops
+                rules:
+                  - name: stuck
+                    when:
+                      minRepeats: 3
+                    annotate:
+                      - type: RETRY
+                        label: Зацикленная обработка
+                """, "test");
+        Timeline once = timelineOf(event("2026-08-09T10:00:00Z", LogLevel.INFO, "Опрос статуса"));
+        Timeline looping = timelineOf(
+                event("2026-08-09T10:00:00Z", LogLevel.INFO, "Опрос статуса"),
+                event("2026-08-09T10:00:02Z", LogLevel.INFO, "Опрос статуса"),
+                event("2026-08-09T10:00:04Z", LogLevel.INFO, "Опрос статуса"),
+                event("2026-08-09T10:00:06Z", LogLevel.INFO, "Опрос статуса"));
+
+        assertThat(new RuleEngine(set).apply(once)).isEmpty();
+        assertThat(new RuleEngine(set).apply(looping)).hasSize(1);
+        assertThat(looping.getEntries()).hasSize(1);
+        assertThat(looping.getEntries().get(0).getRepeatCount()).isEqualTo(4);
+    }
+
+    @Test
     @DisplayName("Правило без условий отклоняется при проверке набора")
     void rejectsRuleWithoutConditions() {
         RuleSet set = loader.parse("""
