@@ -35,9 +35,15 @@ class UiServerTest {
     private UiServer server;
     private HttpClient client;
 
+    @TempDir
+    Path home;
+
     @BeforeEach
     void startServer() throws IOException {
-        server = new UiServer(AnalyzerConfig.defaults(), 0);
+        AnalyzerConfig config = AnalyzerConfig.defaults();
+        // Память отзывов — во временный файл: тесты не трогают память пользователя.
+        config.getLearning().setFile(home.resolve("feedback.json").toString());
+        server = new UiServer(config, 0);
         server.start();
         client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     }
@@ -49,6 +55,15 @@ class UiServerTest {
 
     private HttpResponse<String> get(String path) throws Exception {
         return client.send(HttpRequest.newBuilder(URI.create(base() + path)).GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    }
+
+    private HttpResponse<String> postJson(String path, String body) throws Exception {
+        return client.send(
+                HttpRequest.newBuilder(URI.create(base() + path))
+                        .header("Content-Type", "application/json; charset=utf-8")
+                        .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                        .build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
@@ -180,6 +195,53 @@ class UiServerTest {
                 + URLEncoder.encode("нет-такого-файла.log", StandardCharsets.UTF_8), "");
         assertThat(missing.statusCode()).isEqualTo(400);
         assertThat(missing.body()).contains("не найден");
+    }
+
+    @Test
+    @DisplayName("Оценка разбора запоминается и применяется при следующем анализе")
+    void remembersFeedback() throws Exception {
+        String first = post("/api/analyze?format=json", LOG).body();
+        String signature = first.replaceAll("(?s).*\"signature\"\\s*:\\s*\"([^\"]+)\".*", "$1");
+        assertThat(signature).hasSize(12);
+
+        HttpResponse<String> saved = postJson("/api/feedback", """
+                { "signature": "%s",
+                  "verdict": "wrong",
+                  "cause": { "title": "Обращение к null-ссылке", "rule": "null-pointer", "source": "RULE" },
+                  "taught": { "title": "Профиль скидок не создаётся для новых клиентов",
+                              "recommendation": "Создавать профиль при регистрации",
+                              "steps": "Проверить миграцию\\nДобавить проверку" },
+                  "sample": "NullPointerException: profile is null" }
+                """.formatted(signature));
+
+        assertThat(saved.statusCode()).isEqualTo(200);
+        assertThat(saved.body()).contains("\"ok\":true");
+
+        // Тот же сбой в другом логе получает записанный ответ, а не догадку анализатора
+        String again = post("/api/analyze?format=json", LOG.replace("8f3c2a1b", "0e1d2c3b")).body();
+        assertThat(again)
+                .contains("Профиль скидок не создаётся для новых клиентов")
+                .contains("\"FEEDBACK\"")
+                .contains("Создавать профиль при регистрации");
+
+        HttpResponse<String> memory = get("/api/feedback");
+        assertThat(memory.body())
+                .contains("\"TAUGHT\"")
+                .contains("Профиль скидок")
+                .contains(signature);
+
+        HttpResponse<String> forgotten = postJson("/api/feedback/forget",
+                "{\"signature\":\"" + signature + "\"}");
+        assertThat(forgotten.body()).contains("\"ok\":true");
+        assertThat(get("/api/feedback").body()).doesNotContain("Профиль скидок");
+    }
+
+    @Test
+    @DisplayName("Отзыв без инцидента и без версии причины отклоняется")
+    void rejectsIncompleteFeedback() throws Exception {
+        assertThat(postJson("/api/feedback", "{}").statusCode()).isEqualTo(400);
+        assertThat(postJson("/api/feedback", "{\"signature\":\"aaaabbbbcccc\",\"verdict\":\"correct\"}")
+                .statusCode()).isEqualTo(400);
     }
 
     @Test

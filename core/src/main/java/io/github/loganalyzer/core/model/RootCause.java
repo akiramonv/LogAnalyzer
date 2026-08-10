@@ -18,12 +18,25 @@ public final class RootCause {
         /** Пользовательское или встроенное правило из rule-файла. */
         RULE,
         /** Языковая модель. */
-        LLM
+        LLM,
+        /** Формулировка, которую сам пользователь дал такому же инциденту раньше. */
+        FEEDBACK
     }
 
     /** Ссылка на событие-доказательство. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Evidence(String entryId, String timestamp, String summary) {
+    }
+
+    /**
+     * Отметка о том, что версия уже оценивалась человеком: сколько раз её подтверждали
+     * и отвергали и не является ли она ответом самого пользователя.
+     *
+     * <p>Именно эта отметка отличает «анализатор так думает» от «это уже проверяли» —
+     * в отчёте она показывается рядом с уверенностью.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record Learned(int confirmations, int rejections, boolean taught) {
     }
 
     private final String title;
@@ -36,6 +49,7 @@ public final class RootCause {
     /** Конкретные шаги проверки и устранения — по порядку. */
     private final List<String> steps;
     private final List<Evidence> evidence;
+    private final Learned learned;
 
     private RootCause(Builder b) {
         this.title = b.title;
@@ -47,6 +61,7 @@ public final class RootCause {
         this.recommendation = b.recommendation;
         this.steps = List.copyOf(b.steps);
         this.evidence = List.copyOf(b.evidence);
+        this.learned = b.learned;
     }
 
     public static Builder builder() {
@@ -89,6 +104,26 @@ public final class RootCause {
         return evidence;
     }
 
+    /** @return оценка человека для этой версии либо {@code null}, если её ещё не оценивали. */
+    public Learned getLearned() {
+        return learned;
+    }
+
+    /** @return строитель, заполненный полями этой гипотезы — для правки уверенности и пометок. */
+    public Builder toBuilder() {
+        return new Builder()
+                .title(title)
+                .description(description)
+                .category(category)
+                .confidence(confidence)
+                .source(source)
+                .rule(rule)
+                .recommendation(recommendation)
+                .steps(steps)
+                .evidence(evidence)
+                .learned(learned);
+    }
+
     @Override
     public String toString() {
         return String.format("%s (%.2f)", title, confidence);
@@ -105,6 +140,7 @@ public final class RootCause {
         private String recommendation;
         private final List<String> steps = new ArrayList<>();
         private final List<Evidence> evidence = new ArrayList<>();
+        private Learned learned;
 
         public Builder title(String v) {
             this.title = v;
@@ -168,6 +204,18 @@ public final class RootCause {
             if (e != null) {
                 this.evidence.add(e);
             }
+            return this;
+        }
+
+        public Builder evidence(List<Evidence> list) {
+            if (list != null) {
+                list.forEach(this::evidence);
+            }
+            return this;
+        }
+
+        public Builder learned(Learned v) {
+            this.learned = v;
             return this;
         }
 

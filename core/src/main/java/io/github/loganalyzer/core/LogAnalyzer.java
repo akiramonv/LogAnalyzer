@@ -5,6 +5,9 @@ import io.github.loganalyzer.core.analyze.RootCauseAnalyzer;
 import io.github.loganalyzer.core.config.AnalyzerConfig;
 import io.github.loganalyzer.core.correlate.Correlator;
 import io.github.loganalyzer.core.correlate.EventGroup;
+import io.github.loganalyzer.core.learn.FeedbackStore;
+import io.github.loganalyzer.core.learn.IncidentSignature;
+import io.github.loganalyzer.core.learn.LearningRootCauseAnalyzer;
 import io.github.loganalyzer.core.model.AnalysisReport;
 import io.github.loganalyzer.core.model.LogEvent;
 import io.github.loganalyzer.core.model.LogLevel;
@@ -27,7 +30,8 @@ import java.util.List;
 /**
  * Фасад анализа: принимает источники логов и возвращает готовый отчёт.
  *
- * <p>Конвейер: разбор → корреляция → построение таймлайнов → правила → анализ первопричины.
+ * <p>Конвейер: разбор → корреляция → построение таймлайнов → правила → анализ первопричины →
+ * поправка на прошлые оценки пользователя (см. {@link io.github.loganalyzer.core.learn}).
  * Класс намеренно не зависит ни от CLI, ни от UI — его одинаково использует
  * консольная команда и плагин IDE.
  *
@@ -44,6 +48,7 @@ public final class LogAnalyzer {
     private final TimelineBuilder timelineBuilder;
     private final RuleEngine ruleEngine;
     private final RootCauseAnalyzer rootCauseAnalyzer;
+    private final FeedbackStore feedbackStore;
     private final int maxAlternatives;
 
     public LogAnalyzer() {
@@ -65,9 +70,18 @@ public final class LogAnalyzer {
         this.correlator = new Correlator(this.config.toCorrelationOptions());
         this.timelineBuilder = new TimelineBuilder(this.config.toTimelineOptions());
         this.ruleEngine = new RuleEngine(ruleSet == null ? loadRules(this.config) : ruleSet);
-        this.rootCauseAnalyzer = rootCauseAnalyzer == null
+        RootCauseAnalyzer base = rootCauseAnalyzer == null
                 ? new HeuristicRootCauseAnalyzer(this.config.toAnalysisOptions())
                 : rootCauseAnalyzer;
+        this.feedbackStore = this.config.getLearning().isEnabled()
+                ? FeedbackStore.forFile(this.config.learningFile())
+                : null;
+        // Обучение — надстройка над любым анализатором причин: сначала обычный разбор,
+        // затем поправка на то, что пользователь уже говорил о таких же инцидентах.
+        this.rootCauseAnalyzer = feedbackStore == null
+                ? base
+                : new LearningRootCauseAnalyzer(base, feedbackStore,
+                        this.config.getAnalysis().getMinConfidence());
         this.maxAlternatives = this.config.getAnalysis().getMaxAlternatives();
     }
 
@@ -83,6 +97,11 @@ public final class LogAnalyzer {
 
     public RuleEngine getRuleEngine() {
         return ruleEngine;
+    }
+
+    /** @return память отзывов, применяемая при анализе, либо {@code null}, если обучение выключено. */
+    public FeedbackStore getFeedbackStore() {
+        return feedbackStore;
     }
 
     public AnalyzerConfig getConfig() {
@@ -173,9 +192,14 @@ public final class LogAnalyzer {
     public AnalysisReport analyzeEvents(List<LogEvent> events, AnalysisReport report) {
         AnalysisReport result = report == null ? new AnalysisReport() : report;
         fillEventSummary(events, result);
+        if (feedbackStore != null && feedbackStore.getLoadWarning() != null) {
+            result.addWarning(feedbackStore.getLoadWarning());
+        }
 
         for (EventGroup group : correlator.correlate(events)) {
             Timeline timeline = timelineBuilder.build(group);
+            // Сигнатура нужна и обучению, и интерфейсу: по ней отзыв привязывается к инциденту.
+            timeline.setSignature(IncidentSignature.of(timeline));
             List<RuleEngine.RuleHit> hits = ruleEngine.apply(timeline);
             List<RootCause> causes = rootCauseAnalyzer.analyze(timeline, hits);
             if (!causes.isEmpty()) {

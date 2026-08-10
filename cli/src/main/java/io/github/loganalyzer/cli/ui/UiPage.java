@@ -203,6 +203,29 @@ final class UiPage {
                    width: 100%; max-width: 100%; box-sizing: border-box; }
             .note { font-size: 13px; color: var(--muted-2); }
 
+            /* ── Оценка ответа ──────────────────────────────────────────── */
+            .verdict { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                   margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+            .verdict .q { font-size: 13px; color: var(--muted); }
+            .verdict button { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border);
+                   background: var(--panel); color: var(--fg); cursor: pointer; font-size: 13px; }
+            .verdict button:hover:not(:disabled) { background: var(--line); }
+            .verdict .done { font-size: 13px; color: #1a7f37; }
+            .chip.learn { background: #eaf1fb; color: var(--accent); }
+            .teach { margin-top: 10px; padding: 12px 14px; background: #fbfbfc;
+                   border: 1px solid var(--line); border-radius: 6px; max-width: 88ch; }
+            .teach .opt { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0;
+                   font-size: 14px; color: var(--fg-2); cursor: pointer; }
+            .teach .opt input { margin-top: 4px; }
+            .teach .own { display: grid; gap: 8px; margin: 8px 0 12px 24px; }
+            .teach .own textarea { min-height: 62px; flex: 0 0 auto; }
+            .mem-row td { vertical-align: top; }
+            .mem-title { font-weight: 500; }
+            .mem-sample { color: var(--muted-2); font-size: 12px; font-family: var(--mono);
+                   overflow-wrap: anywhere; }
+            .mem-forget { border: 1px solid var(--border); background: var(--panel); color: var(--muted);
+                   border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+
             /* ── Разделы «Правила», «Форматы», «Справка» ─────────────────── */
             .doc { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
                    padding: 18px; max-width: 1100px; }
@@ -232,6 +255,7 @@ final class UiPage {
               <nav>
                 <a href="#" data-view="analyze" class="active">Анализ</a>
                 <a href="#" data-view="rules">Правила</a>
+                <a href="#" data-view="memory">Память</a>
                 <a href="#" data-view="patterns">Форматы логов</a>
                 <a href="#" data-view="help">Справка</a>
               </nav>
@@ -326,6 +350,9 @@ final class UiPage {
               let source = 'text';
               let view = 'analyze';
               let lastReport = null;
+              // Что анализатор уже знает от пользователя: список нужен разделу «Память»,
+              // а флаг enabled — чтобы не предлагать оценку, когда обучение выключено.
+              let memory = { enabled: true, records: [] };
 
               el('addr').textContent = location.host;
 
@@ -340,6 +367,7 @@ final class UiPage {
                   el('metrics').classList.toggle('hidden', view !== 'analyze');
                   if (view === 'analyze') renderReport();
                   else if (view === 'rules') loadRules();
+                  else if (view === 'memory') loadMemory();
                   else if (view === 'patterns') loadPatterns();
                   else renderHelp();
                 });
@@ -533,11 +561,157 @@ final class UiPage {
                 }).join('');
               }
 
-              function renderCause(timeline) {
+              // ── Оценка ответа: как пользователь говорит «верно» или «нет» ──
+              function learnBadge(cause) {
+                const mark = cause.learned;
+                if (!mark) return '';
+                let label = '';
+                if (mark.taught) label = 'ваша формулировка';
+                else {
+                  const parts = [];
+                  if (mark.confirmations) parts.push('подтверждено ' + mark.confirmations + '×');
+                  if (mark.rejections) parts.push('отвергалось ' + mark.rejections + '×');
+                  label = parts.join(', ');
+                }
+                return label ? '<span class="chip learn">' + esc(label) + '</span>' : '';
+              }
+
+              // Строка образца инцидента: по ней запись узнаётся в разделе «Память».
+              function sampleOf(timeline) {
+                const entries = timeline.entries || [];
+                for (let i = 0; i < entries.length; i++) {
+                  const event = entries[i].event;
+                  if (event.exception) {
+                    let deepest = event.exception, guard = 0;
+                    while (deepest.cause && guard++ < 32) deepest = deepest.cause;
+                    return deepest.type + (deepest.message ? ': ' + deepest.message : '');
+                  }
+                  if (event.level === 'ERROR' || event.level === 'FATAL') return oneLine(event);
+                }
+                return entries.length ? oneLine(entries[0].event) : '';
+              }
+
+              function causeRef(cause) {
+                return cause ? { title: cause.title, rule: cause.rule || '', source: cause.source || '' } : null;
+              }
+
+              /*
+               * Форма обратной связи. Разбор ценен ровно настолько, насколько ему доверяют,
+               * поэтому вопрос задаётся прямо под ответом: «верно» — версия закрепляется,
+               * «нет» — открывается выбор правильной версии среди остальных либо своя
+               * формулировка. И то, и другое запоминается для следующих таких инцидентов.
+               */
+              function renderVerdict(timeline, index) {
+                if (!memory.enabled || !timeline.signature) return '';
+                const cause = timeline.rootCause;
+                const options = (timeline.alternatives || []).map(function (alt, i) {
+                  return '<label class="opt"><input type="radio" name="fix' + index + '" value="' + i + '">'
+                       + '<span>' + esc(alt.title) + '</span></label>';
+                }).join('');
+                const head = cause
+                  ? '<span class="q">Причина названа верно?</span>'
+                    + '<button type="button" class="v-yes">Да, это оно</button>'
+                    + '<button type="button" class="v-no">Нет</button>'
+                  : '<span class="q">Причина не определена.</span>'
+                    + '<button type="button" class="v-no">Указать причину</button>';
+                return '<div class="verdict" data-tl="' + index + '">' + head
+                     + '<span class="done hidden"></span></div>'
+                     + '<div class="teach hidden">'
+                     + '<div class="plan-title">Что было причиной на самом деле?</div>'
+                     + options
+                     + '<label class="opt"><input type="radio" name="fix' + index + '" value="own" checked>'
+                     + '<span>Своя формулировка</span></label>'
+                     + '<div class="own">'
+                     + '<input type="text" class="f-title" placeholder="Причина одной строкой">'
+                     + '<input type="text" class="f-rec" placeholder="Что делать — одной строкой">'
+                     + '<textarea class="f-steps" spellcheck="false" '
+                     + 'placeholder="Шаги разбора — по одному в строке (не обязательно)"></textarea>'
+                     + '</div>'
+                     + '<button type="button" class="primary f-save">Запомнить</button>'
+                     + '</div>';
+              }
+
+              async function sendFeedback(payload, bar, okMessage) {
+                try {
+                  const response = await fetch('/api/feedback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+                    body: JSON.stringify(payload)
+                  });
+                  const body = await response.text();
+                  if (!response.ok) { setStatus(body || 'Отзыв не сохранён', true); return; }
+                  const done = bar.querySelector('.done');
+                  done.classList.remove('hidden');
+                  done.innerHTML = esc(okMessage) + ' <a href="#" class="re-run">Разобрать заново</a>';
+                  done.querySelector('.re-run').addEventListener('click', function (e) {
+                    e.preventDefault(); analyse();
+                  });
+                  bar.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+                  setStatus('Запомнено');
+                } catch (e) {
+                  setStatus('Сервер недоступен: ' + e.message, true);
+                }
+              }
+
+              function bindVerdict(bar) {
+                const index = Number(bar.dataset.tl);
+                const timeline = (lastReport.timelines || [])[index];
+                if (!timeline) return;
+                const teach = bar.nextElementSibling;
+                const yes = bar.querySelector('.v-yes');
+                if (yes) {
+                  yes.addEventListener('click', function () {
+                    sendFeedback({
+                      signature: timeline.signature,
+                      verdict: 'correct',
+                      cause: causeRef(timeline.rootCause),
+                      sample: sampleOf(timeline)
+                    }, bar, 'Запомнил: причина названа верно.');
+                  });
+                }
+                bar.querySelector('.v-no').addEventListener('click', function () {
+                  teach.classList.toggle('hidden');
+                  const field = teach.querySelector('.f-title');
+                  if (!teach.classList.contains('hidden')) field.focus();
+                });
+                teach.querySelectorAll('input[type=radio]').forEach(function (radio) {
+                  radio.addEventListener('change', function () {
+                    teach.querySelector('.own').classList.toggle('hidden', radio.value !== 'own');
+                  });
+                });
+                teach.querySelector('.f-save').addEventListener('click', function () {
+                  const payload = { signature: timeline.signature, sample: sampleOf(timeline) };
+                  if (timeline.rootCause) {
+                    payload.verdict = 'wrong';
+                    payload.cause = causeRef(timeline.rootCause);
+                  }
+                  const picked = teach.querySelector('input[type=radio]:checked');
+                  if (picked && picked.value !== 'own') {
+                    payload.correct = causeRef((timeline.alternatives || [])[Number(picked.value)]);
+                  } else {
+                    const title = teach.querySelector('.f-title').value.trim();
+                    if (!title) {
+                      setStatus('Напишите, что было причиной', true);
+                      teach.querySelector('.f-title').focus();
+                      return;
+                    }
+                    payload.taught = {
+                      title: title,
+                      recommendation: teach.querySelector('.f-rec').value.trim(),
+                      steps: teach.querySelector('.f-steps').value
+                    };
+                  }
+                  teach.classList.add('hidden');
+                  sendFeedback(payload, bar, 'Запомнил: при следующем таком инциденте покажу это.');
+                });
+              }
+
+              function renderCause(timeline, index) {
                 const cause = timeline.rootCause;
                 if (!cause) {
                   return timeline.failed
-                    ? '<div class="cause"><p class="note">Причина не определена автоматически.</p></div>'
+                    ? '<div class="cause"><p class="note">Причина не определена автоматически.</p>'
+                      + renderVerdict(timeline, index) + '</div>'
                     : '';
                 }
                 const percent = Math.round((cause.confidence || 0) * 100);
@@ -565,13 +739,15 @@ final class UiPage {
                 return '<div class="cause">'
                      + '<div class="cause-head"><span class="step" style="margin:0">Вероятная причина</span>'
                      + '<span class="bar"><span style="width:' + percent + '%"></span></span>'
-                     + '<span class="note">уверенность ' + percent + '%</span></div>'
+                     + '<span class="note">уверенность ' + percent + '%</span>'
+                     + learnBadge(cause) + '</div>'
                      + '<h3>' + esc(cause.title) + '</h3>'
                      + summaryLine
                      + (cause.description ? '<p>' + esc(cause.description) + '</p>' : '')
                      + steps
                      + '<div class="refs">' + refs + '</div>'
-                     + '<div class="alt-list hidden">' + alts + '</div></div>';
+                     + '<div class="alt-list hidden">' + alts + '</div>'
+                     + renderVerdict(timeline, index) + '</div>';
               }
 
               function renderReport() {
@@ -604,7 +780,7 @@ final class UiPage {
                        + '<span class="card-title">Инцидент ' + (index + 1) + '</span>'
                        + '<code class="note">' + esc(kind) + ' ' + esc(timeline.correlationId) + '</code>'
                        + '<span class="card-meta">' + esc(meta) + '</span></div>'
-                       + renderCause(timeline)
+                       + renderCause(timeline, index)
                        + renderScale(timeline)
                        + '<table><thead><tr><th class="c-id">№</th><th class="c-time">время</th>'
                        + '<th class="c-level">уровень</th><th class="c-logger">логгер</th>'
@@ -636,6 +812,7 @@ final class UiPage {
                     list.classList.toggle('hidden');
                   });
                 });
+                content.querySelectorAll('.verdict').forEach(bindVerdict);
               }
 
               function applySearch() {
@@ -668,6 +845,69 @@ final class UiPage {
                            + '<td>' + (rule.confidence ? Math.round(rule.confidence * 100) + '%' : '') + '</td></tr>';
                     }).join('')
                   + '</tbody></table></div>';
+              }
+
+              // ── Раздел «Память» ─────────────────────────────────────────
+              async function fetchMemory() {
+                try {
+                  memory = await (await fetch('/api/feedback')).json();
+                } catch (e) {
+                  memory = { enabled: false, records: [] };
+                }
+                return memory;
+              }
+
+              async function loadMemory() {
+                content.innerHTML = '<p class="empty">Читаю память…</p>';
+                await fetchMemory();
+                const records = memory.records || [];
+                const kind = { TAUGHT: 'ваша формулировка', CONFIRMED: 'подтверждено',
+                               REJECTED: 'отвергнуто' };
+                const head = '<div class="doc"><h2>Что анализатор запомнил (' + records.length + ')</h2>'
+                  + '<p>Здесь копятся ваши оценки: подтверждённая причина в следующий раз '
+                  + 'показывается первой, отвергнутая — опускается, а ваша формулировка '
+                  + 'подставляется как готовый ответ. Инцидент опознаётся по сигнатуре — '
+                  + 'отпечатку исключения, логгера и сообщения без номеров и идентификаторов, '
+                  + 'поэтому урок применяется и к завтрашнему такому же сбою.</p>'
+                  + (memory.enabled ? '' : '<p><b>Обучение выключено в конфигурации '
+                     + '(learning.enabled: false)</b> — новые оценки не сохраняются.</p>')
+                  + (memory.warning ? '<p><b>' + esc(memory.warning) + '</b></p>' : '')
+                  + (memory.file ? '<p>Файл памяти: <code>' + esc(memory.file) + '</code></p>' : '');
+                if (!records.length) {
+                  content.innerHTML = head + '<p>Пока пусто. Разберите лог и на карточке инцидента '
+                    + 'ответьте, верно ли названа причина.</p></div>';
+                  return;
+                }
+                content.innerHTML = head
+                  + '<table><thead><tr><th class="c-id">инцидент</th><th>оценка</th>'
+                  + '<th>причина</th><th class="c-level"></th></tr></thead><tbody>'
+                  + records.map(function (r) {
+                      const counters = [];
+                      if (r.confirmations) counters.push('+' + r.confirmations);
+                      if (r.rejections) counters.push('−' + r.rejections);
+                      return '<tr class="mem-row"><td class="mono">' + esc(r.signature) + '</td>'
+                           + '<td>' + esc(kind[r.kind] || r.kind)
+                           + (counters.length ? ' <span class="tag">' + counters.join(' / ') + '</span>' : '')
+                           + '</td>'
+                           + '<td><div class="mem-title">' + esc(r.title || '') + '</div>'
+                           + (r.recommendation ? '<div class="note">' + esc(r.recommendation) + '</div>' : '')
+                           + (r.sample ? '<div class="mem-sample">' + esc(r.sample) + '</div>' : '')
+                           + '</td>'
+                           + '<td><button type="button" class="mem-forget" data-sig="' + esc(r.signature)
+                           + '" data-key="' + esc(r.causeKey) + '">забыть</button></td></tr>';
+                    }).join('')
+                  + '</tbody></table></div>';
+
+                content.querySelectorAll('.mem-forget').forEach(function (button) {
+                  button.addEventListener('click', async function () {
+                    await fetch('/api/feedback/forget', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+                      body: JSON.stringify({ signature: button.dataset.sig, causeKey: button.dataset.key })
+                    });
+                    loadMemory();
+                  });
+                });
               }
 
               async function loadPatterns() {
@@ -712,6 +952,18 @@ final class UiPage {
                   + 'трассировки нет), схлопнет повторы, пометит таймауты, ретраи и внешние вызовы, '
                   + 'развернёт цепочку <code>Caused by</code> до первопричины и назовёт вероятную причину '
                   + 'с оценкой уверенности.</p>'
+                  + '<h2>Как он учится</h2>'
+                  + '<p>Под каждой названной причиной есть вопрос «Причина названа верно?». '
+                  + 'Ответ «да» закрепляет версию: в следующий раз такой же сбой начнётся сразу с неё. '
+                  + 'Ответ «нет» открывает выбор — можно указать верную версию среди остальных '
+                  + 'или написать свою формулировку с планом действий; она станет ответом для всех '
+                  + 'следующих таких инцидентов.</p>'
+                  + '<p>Инцидент опознаётся по сигнатуре — отпечатку цепочки исключений, места в коде, '
+                  + 'логгера и сообщения, из которого убраны идентификаторы, числа и время. Поэтому '
+                  + 'урок переносится на такой же сбой с другим traceId и в другом логе. Накопленное '
+                  + 'лежит в разделе «Память», а на диске — в одном JSON-файле: его можно положить '
+                  + 'в репозиторий команды и раздать коллегам '
+                  + '(<code>log-analyzer feedback --export team.json</code>).</p>'
                   + '<h2>То же самое из консоли</h2>'
                   + '<pre>log-analyzer analyze -i app.log --only-failed'
                   + String.fromCharCode(10) + 'log-analyzer analyze -i logs/ -r -f html -o report.html'
@@ -755,6 +1007,7 @@ final class UiPage {
                 reader.readAsText(file, 'UTF-8');
               });
 
+              fetchMemory();
               el('text').focus();
             })();
             </script>

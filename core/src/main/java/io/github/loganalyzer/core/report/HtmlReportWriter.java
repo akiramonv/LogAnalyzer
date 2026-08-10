@@ -129,6 +129,9 @@ public final class HtmlReportWriter implements ReportWriter {
         if (!timeline.getServices().isEmpty()) {
             out.append(" · сервисы: ").append(esc(String.join(", ", timeline.getServices())));
         }
+        if (timeline.getSignature() != null) {
+            out.append(" · сигнатура: <code>").append(esc(timeline.getSignature())).append("</code>");
+        }
         out.append("</p>\n");
 
         writeCause(timeline, out);
@@ -152,6 +155,10 @@ public final class HtmlReportWriter implements ReportWriter {
                 .append(String.valueOf(percent)).append("%\"></span></span>")
                 .append(String.valueOf(percent)).append("%</span></div>\n");
         out.append("<p class=\"title\">").append(esc(cause.getTitle())).append("</p>\n");
+        String learned = TextReportWriter.learnedLabel(cause);
+        if (learned != null) {
+            out.append("<p class=\"learned\">").append(esc(learned)).append("</p>\n");
+        }
         if (cause.getDescription() != null && !cause.getDescription().isBlank()) {
             out.append("<p>").append(esc(cause.getDescription())).append("</p>\n");
         }
@@ -349,6 +356,7 @@ public final class HtmlReportWriter implements ReportWriter {
                 .cause.unknown { color: var(--muted); }
                 .cause-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
                 .cause .title { font-size: 15px; font-weight: 600; margin: 6px 0; }
+                .cause .learned { font-size: 12px; color: var(--muted); }
                 .cause p { margin: 4px 0; }
                 .steps { margin: 8px 0 4px 20px; padding: 0; }
                 .steps li { margin-bottom: 4px; }

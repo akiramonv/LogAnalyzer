@@ -24,6 +24,7 @@ public final class Timeline {
 
     private RootCause rootCause;
     private final List<RootCause> alternatives = new ArrayList<>();
+    private String signature;
 
     public Timeline(String correlationId, CorrelationKind correlationKind) {
         this.correlationId = correlationId;
@@ -52,6 +53,19 @@ public final class Timeline {
 
     public List<RootCause> getAlternatives() {
         return alternatives;
+    }
+
+    /**
+     * @return отпечаток инцидента: одинаковые по сути сбои получают одинаковую строку,
+     *         даже если у них разные traceId, время и номера заказов. По нему анализатор
+     *         связывает инцидент с оценками, которые пользователь давал раньше.
+     */
+    public String getSignature() {
+        return signature;
+    }
+
+    public void setSignature(String v) {
+        this.signature = v;
     }
 
     public Instant getStart() {

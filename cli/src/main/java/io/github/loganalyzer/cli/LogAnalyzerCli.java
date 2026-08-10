@@ -14,6 +14,7 @@ import picocli.CommandLine.Option;
  * log-analyzer rules --list
  * log-analyzer patterns --test "2026-08-09T10:00:00.123  INFO 1 --- [main] c.e.App : started"
  * log-analyzer prompt -i app.log --trace 8f3c2a
+ * log-analyzer feedback
  * </pre>
  */
 @Command(
@@ -27,6 +28,7 @@ import picocli.CommandLine.Option;
                 RulesCommand.class,
                 PatternsCommand.class,
                 PromptCommand.class,
+                FeedbackCommand.class,
                 CommandLine.HelpCommand.class
         })
 public final class LogAnalyzerCli implements Runnable {

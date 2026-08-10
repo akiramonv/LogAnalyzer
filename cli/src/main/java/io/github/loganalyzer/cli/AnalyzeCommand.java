@@ -139,6 +139,14 @@ final class AnalyzeCommand implements Callable<Integer> {
             description = "Вернуть код 3, если найдены инциденты с ошибками (для CI).")
     boolean failOnError;
 
+    @Option(names = "--no-learning",
+            description = "Не учитывать прошлые оценки причин (разбор «с чистого листа»).")
+    boolean noLearning;
+
+    @Option(names = "--memory", paramLabel = "FILE",
+            description = "Файл памяти с оценками причин (по умолчанию ~/.log-analyzer/feedback.json).")
+    Path memory;
+
     @Spec
     CommandLine.Model.CommandSpec spec;
 
@@ -251,6 +259,12 @@ final class AnalyzeCommand implements Callable<Integer> {
         }
         if (!appPackages.isEmpty()) {
             cfg.getAnalysis().getApplicationPackages().addAll(appPackages);
+        }
+        if (noLearning) {
+            cfg.getLearning().setEnabled(false);
+        }
+        if (memory != null) {
+            cfg.getLearning().setFile(memory.toString());
         }
     }
 

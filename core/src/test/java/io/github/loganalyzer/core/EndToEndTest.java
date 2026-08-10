@@ -30,6 +30,9 @@ class EndToEndTest {
             String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             AnalyzerConfig config = AnalyzerConfig.defaults();
             config.getAnalysis().getApplicationPackages().add("com.example");
+            // Проверяем сам разбор: память пользователя (~/.log-analyzer/feedback.json)
+            // не должна влиять на ожидаемые причины — обучению посвящён LearningTest.
+            config.getLearning().setEnabled(false);
             return new LogAnalyzer(config).analyzeText(text, resource);
         }
     }

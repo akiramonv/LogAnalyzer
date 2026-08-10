@@ -9,7 +9,9 @@ flowchart LR
     C -->|EventGroup| D[TimelineBuilder]
     D -->|Timeline| E[RuleEngine]
     E -->|RuleHit| F[RootCauseAnalyzer]
-    F -->|RootCause| G[ReportWriter]
+    F -->|RootCause| L[LearningRootCauseAnalyzer]
+    M[(FeedbackStore<br/>оценки пользователя)] --> L
+    L -->|RootCause| G[ReportWriter]
     G --> H[text / JSON / HTML / Mermaid]
     H --> I[консоль, файл]
     H --> J[веб-интерфейс]
@@ -40,6 +42,9 @@ flowchart LR
 | `POST /api/analyze` | текст фрагмента или путь к файлу → отчёт в `json` / `html` / `text` |
 | `GET /api/rules` | правила с условиями и формулировками причин — раздел «Правила» |
 | `GET /api/patterns`, `POST /api/patterns` | встроенные шаблоны и проверка строки — раздел «Форматы логов» |
+| `GET /api/feedback` | что анализатор запомнил из оценок пользователя — раздел «Память» |
+| `POST /api/feedback` | оценка разбора: «верно», «не то», правильная версия или своя формулировка |
+| `POST /api/feedback/forget` | убрать запись из памяти |
 
 Страница запрашивает отчёт в **JSON** и рисует инциденты сама: так сводка, поиск по событиям
 и карточки живут в одном документе, а состояние фильтров не теряется между запусками.
@@ -58,6 +63,7 @@ correlate/  Correlator, EventGroup, CorrelationOptions
 timeline/   TimelineBuilder, EventFingerprint, TimelineOptions
 rules/      Rule, Condition, RuleSet, RuleEngine, RuleSetLoader
 analyze/    RootCauseAnalyzer, HeuristicRootCauseAnalyzer, IncidentPromptBuilder, AnalysisOptions
+learn/      IncidentSignature, FeedbackRecord, FeedbackStore, LearningRootCauseAnalyzer
 report/     JsonReportWriter, TextReportWriter, HtmlReportWriter, MermaidReportWriter
 config/     AnalyzerConfig
 ```
@@ -97,12 +103,14 @@ classDiagram
         +List~TimelineEntry~ entries
         +RootCause rootCause
         +List~RootCause~ alternatives
+        +String signature
     }
     class RootCause {
         +String title, description, recommendation
         +double confidence
         +Source source
         +List~Evidence~ evidence
+        +Learned learned
     }
     LogEvent --> ExceptionInfo
     LogEvent --> HttpExchange
@@ -188,6 +196,45 @@ classDiagram
 корреляции и порогом `minConfidence`. Лучшая становится `rootCause`, остальные — `alternatives`.
 
 Если ошибок в цепочке нет, причина **не выдумывается** — поле остаётся пустым.
+
+## Обучение на оценках пользователя
+
+Пакет `learn` — надстройка над анализом причин: сначала обычный разбор, затем поправка
+на то, что пользователь уже говорил о таких же инцидентах.
+
+```mermaid
+flowchart LR
+    T[Timeline] --> S[IncidentSignature<br/>отпечаток инцидента]
+    S --> Q{есть записи<br/>об этом сбое?}
+    Q -- нет --> R[гипотезы как есть]
+    Q -- да --> A[подтверждённую поднять<br/>отвергнутую опустить<br/>ответ пользователя — вперёд]
+    A --> R
+```
+
+**Сигнатура** (`IncidentSignature`) считается по опорному событию — первой ошибке цепочки:
+цепочка типов исключений, класс и метод верхнего кадра первопричины (без номера строки —
+он меняется от правки к правке), логгер, сообщение и HTTP-обмен, из которых убраны числа,
+идентификаторы и время. Все плейсхолдеры нормализации сводятся к одному: номер заказа не должен
+менять сигнатуру от того, что в нём стало больше цифр. Результат — 12 hex-символов;
+он печатается в отчётах и служит адресом записи в памяти.
+
+**Ключ гипотезы** (`causeKey`) отличает версии внутри одного инцидента. Гипотеза от правила
+опознаётся по имени правила — формулировку в правиле можно поправить, не потеряв накопленных
+подтверждений; остальные — по нормализованному заголовку. Ответ пользователя всегда один
+на инцидент (`taught`).
+
+**Память** (`FeedbackStore`) — JSON-файл (`~/.log-analyzer/feedback.json`), запись атомарная,
+на файл в процессе приходится один экземпляр. Испорченный файл не роняет анализ и **не
+перезаписывается**: память переходит в режим «только чтение», а в отчёт добавляется
+предупреждение. Файл переносим: `feedback --export/--import` складывает счётчики и берёт
+более свежие формулировки — так опытом обмениваются внутри команды.
+
+**Применение** (`LearningRootCauseAnalyzer`): подтверждённая версия попадает в «подтверждённый»
+диапазон уверенности (0,80 → 0,90), отвергнутая режется в 2,5 раза за каждое «нет» и,
+провалившись ниже `minConfidence`, исчезает из отчёта. Сортировка ставит сказанное человеком
+впереди догадок: ответ пользователя → подтверждённая им версия → всё остальное по уверенности.
+Оценки не переписывают правила: правила остаются общими и переносимыми, память — личный
+слой поверх них.
 
 ## Отчёты
 

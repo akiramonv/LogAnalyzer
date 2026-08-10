@@ -54,6 +54,14 @@ final class UiCommand implements Callable<Integer> {
     @Option(names = "--zone", paramLabel = "ZONE", description = "Часовой пояс логов, например Europe/Moscow.")
     String zone;
 
+    @Option(names = "--no-learning",
+            description = "Не учитывать прошлые оценки причин и не предлагать оценивать разбор.")
+    boolean noLearning;
+
+    @Option(names = "--memory", paramLabel = "FILE",
+            description = "Файл памяти с оценками причин (по умолчанию ~/.log-analyzer/feedback.json).")
+    Path memory;
+
     @Spec
     CommandLine.Model.CommandSpec spec;
 
@@ -74,6 +82,12 @@ final class UiCommand implements Callable<Integer> {
             cfg.getRules().getFiles().add(file.toString());
         }
         cfg.getAnalysis().getApplicationPackages().addAll(appPackages);
+        if (noLearning) {
+            cfg.getLearning().setEnabled(false);
+        }
+        if (memory != null) {
+            cfg.getLearning().setFile(memory.toString());
+        }
 
         UiServer server = open(cfg);
         server.start();

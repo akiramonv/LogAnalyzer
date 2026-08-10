@@ -128,12 +128,20 @@ public final class TextReportWriter implements ReportWriter {
         if (!timeline.getServices().isEmpty()) {
             meta.append(", сервисы: ").append(String.join(", ", timeline.getServices()));
         }
+        if (timeline.getSignature() != null) {
+            // Сигнатура — то, чем инцидент называют при обучении:
+            // log-analyzer feedback --teach <сигнатура> --title "..."
+            meta.append(", сигнатура: ").append(timeline.getSignature());
+        }
         out.append(meta).append('\n');
 
         RootCause cause = timeline.getRootCause();
         if (cause != null) {
             out.append("    ┌ Вероятная причина (").append(percent(cause.getConfidence())).append("): ")
                     .append(cause.getTitle()).append('\n');
+            if (learnedLabel(cause) != null) {
+                out.append("    │ ").append(learnedLabel(cause)).append('\n');
+            }
             if (cause.getDescription() != null && !cause.getDescription().isBlank()) {
                 out.append("    │ ").append(wrap(cause.getDescription(), "    │ ")).append('\n');
             }
@@ -287,6 +295,42 @@ public final class TextReportWriter implements ReportWriter {
 
     private static String percent(double confidence) {
         return Math.round(confidence * 100) + "%";
+    }
+
+    /**
+     * @return пометка об оценке человека («это ваша формулировка», «подтверждали N раз»)
+     *         либо {@code null}, если версию ещё не оценивали
+     */
+    static String learnedLabel(RootCause cause) {
+        RootCause.Learned learned = cause.getLearned();
+        if (learned == null) {
+            return null;
+        }
+        if (learned.taught()) {
+            return "★ Ваша формулировка для такого инцидента.";
+        }
+        StringBuilder sb = new StringBuilder("★ Эту версию вы уже оценивали: ");
+        if (learned.confirmations() > 0) {
+            sb.append("подтверждали ").append(learned.confirmations()).append(' ')
+                    .append(times(learned.confirmations()));
+        }
+        if (learned.rejections() > 0) {
+            if (learned.confirmations() > 0) {
+                sb.append(", ");
+            }
+            sb.append("отвергали ").append(learned.rejections()).append(' ')
+                    .append(times(learned.rejections()));
+        }
+        return sb.append('.').toString();
+    }
+
+    private static String times(int count) {
+        int last = count % 10;
+        int lastTwo = count % 100;
+        if (lastTwo >= 11 && lastTwo <= 14) {
+            return "раз";
+        }
+        return last >= 2 && last <= 4 ? "раза" : "раз";
     }
 
     /** Переносит длинный текст, выравнивая по префиксу. */

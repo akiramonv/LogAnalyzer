@@ -43,6 +43,9 @@ import java.util.List;
  * analysis:
  *   minConfidence: 0.3
  *   applicationPackages: [ com.mycompany ]
+ * learning:
+ *   enabled: true
+ *   file: ./team-feedback.json
  * </pre>
  */
 public final class AnalyzerConfig {
@@ -333,11 +336,38 @@ public final class AnalyzerConfig {
         }
     }
 
+    /**
+     * Секция {@code learning} — память анализатора: оценки, которые пользователь давал
+     * названным причинам, и его собственные формулировки.
+     */
+    public static final class LearningSection {
+        private boolean enabled = true;
+        /** Файл памяти; пусто — {@code ~/.log-analyzer/feedback.json}. */
+        private String file;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean v) {
+            this.enabled = v;
+        }
+
+        public String getFile() {
+            return file;
+        }
+
+        public void setFile(String v) {
+            this.file = v;
+        }
+    }
+
     private ParseSection parse = new ParseSection();
     private CorrelationSection correlation = new CorrelationSection();
     private TimelineSection timeline = new TimelineSection();
     private RulesSection rules = new RulesSection();
     private AnalysisSection analysis = new AnalysisSection();
+    private LearningSection learning = new LearningSection();
 
     public ParseSection getParse() {
         return parse;
@@ -377,6 +407,22 @@ public final class AnalyzerConfig {
 
     public void setAnalysis(AnalysisSection v) {
         this.analysis = v == null ? new AnalysisSection() : v;
+    }
+
+    public LearningSection getLearning() {
+        return learning;
+    }
+
+    public void setLearning(LearningSection v) {
+        this.learning = v == null ? new LearningSection() : v;
+    }
+
+    /** @return файл памяти анализатора с учётом значения по умолчанию. */
+    public Path learningFile() {
+        String configured = learning.getFile();
+        return configured == null || configured.isBlank()
+                ? io.github.loganalyzer.core.learn.FeedbackStore.defaultFile()
+                : Path.of(configured);
     }
 
     /** @return конфигурация со значениями по умолчанию. */

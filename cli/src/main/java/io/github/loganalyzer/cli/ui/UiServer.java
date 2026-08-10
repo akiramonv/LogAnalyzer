@@ -6,6 +6,7 @@ import io.github.loganalyzer.cli.InputCollector;
 import io.github.loganalyzer.cli.ReportFilters;
 import io.github.loganalyzer.core.LogAnalyzer;
 import io.github.loganalyzer.core.config.AnalyzerConfig;
+import io.github.loganalyzer.core.learn.FeedbackStore;
 import io.github.loganalyzer.core.model.AnalysisReport;
 import io.github.loganalyzer.core.model.LogEvent;
 import io.github.loganalyzer.core.model.LogLevel;
@@ -51,11 +52,17 @@ public final class UiServer implements AutoCloseable {
             new com.fasterxml.jackson.databind.ObjectMapper();
 
     private final AnalyzerConfig config;
+    private final FeedbackStore feedback;
     private final HttpServer server;
     private final ExecutorService executor;
 
     public UiServer(AnalyzerConfig config, int port) throws IOException {
         this.config = config == null ? AnalyzerConfig.defaults() : config;
+        // Память интерфейса и память анализа — один и тот же файл: отзыв, оставленный
+        // в браузере, применяется уже при следующем разборе.
+        this.feedback = this.config.getLearning().isEnabled()
+                ? FeedbackStore.forFile(this.config.learningFile())
+                : FeedbackStore.inMemory();
         this.server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 0);
         this.executor = Executors.newFixedThreadPool(4, runnable -> {
             Thread thread = new Thread(runnable, "log-analyzer-ui");
@@ -67,6 +74,7 @@ public final class UiServer implements AutoCloseable {
         server.createContext("/api/analyze", this::handleAnalyze);
         server.createContext("/api/rules", this::handleRules);
         server.createContext("/api/patterns", this::handlePatterns);
+        server.createContext("/api/feedback", this::handleFeedback);
     }
 
     public void start() {
@@ -170,6 +178,160 @@ public final class UiServer implements AutoCloseable {
             }
             send(exchange, 200, "application/json", JSON.writeValueAsString(patterns));
         }
+    }
+
+    /**
+     * Оценка разбора: «причина названа верно», «неверно» и «на самом деле причина такая».
+     *
+     * <p>Это единственное место, где анализатор узнаёт о своих ошибках, поэтому обработчик
+     * умеет три вещи: показать накопленное ({@code GET}), записать отзыв ({@code POST}) и
+     * забыть запись ({@code POST /api/feedback/forget}).
+     */
+    private void handleFeedback(HttpExchange exchange) throws IOException {
+        try (exchange) {
+            String path = exchange.getRequestURI().getPath();
+            boolean post = "POST".equalsIgnoreCase(exchange.getRequestMethod());
+
+            if (!post) {
+                send(exchange, 200, "application/json", JSON.writeValueAsString(memoryView()));
+                return;
+            }
+            if (!config.getLearning().isEnabled()) {
+                send(exchange, 409, "text/plain", "Обучение выключено (learning.enabled: false).");
+                return;
+            }
+            com.fasterxml.jackson.databind.JsonNode body = JSON.readTree(
+                    exchange.getRequestBody().readNBytes(1024 * 1024));
+
+            try {
+                Map<String, Object> result = path.endsWith("/forget")
+                        ? forget(body)
+                        : record(body);
+                send(exchange, 200, "application/json", JSON.writeValueAsString(result));
+            } catch (IllegalArgumentException e) {
+                send(exchange, 400, "text/plain", message(e));
+            } catch (RuntimeException e) {
+                send(exchange, 500, "text/plain", "Не удалось сохранить отзыв: " + message(e));
+            }
+        }
+    }
+
+    /** Записывает отзыв о названной причине. */
+    private Map<String, Object> record(com.fasterxml.jackson.databind.JsonNode body) {
+        String signature = text(body, "signature");
+        if (signature == null) {
+            throw new IllegalArgumentException("Не указан инцидент (signature).");
+        }
+        String verdict = text(body, "verdict");
+        String sample = text(body, "sample");
+        com.fasterxml.jackson.databind.JsonNode cause = body.path("cause");
+
+        if ("correct".equals(verdict)) {
+            feedback.confirm(signature, keyOf(cause), text(cause, "title"), text(cause, "rule"), sample);
+        } else if ("wrong".equals(verdict)) {
+            feedback.reject(signature, keyOf(cause), text(cause, "title"), text(cause, "rule"), sample);
+        } else if (verdict != null) {
+            throw new IllegalArgumentException("Неизвестная оценка: " + verdict);
+        }
+
+        // Пользователь мог не просто отвергнуть версию, но и указать верную: либо выбрать
+        // её среди других версий этого же разбора, либо сформулировать сам.
+        com.fasterxml.jackson.databind.JsonNode correct = body.path("correct");
+        if (correct.isObject() && text(correct, "title") != null) {
+            feedback.confirm(signature, keyOf(correct), text(correct, "title"), text(correct, "rule"), sample);
+        }
+        com.fasterxml.jackson.databind.JsonNode taught = body.path("taught");
+        if (taught.isObject() && text(taught, "title") != null) {
+            feedback.teach(signature,
+                    text(taught, "title"),
+                    text(taught, "description"),
+                    text(taught, "recommendation"),
+                    lines(text(taught, "steps")),
+                    sample);
+        }
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("ok", true);
+        result.put("remembered", feedback.forSignature(signature).size());
+        result.put("total", feedback.size());
+        return result;
+    }
+
+    /** Убирает запись из памяти — если пользователь передумал или ошибся. */
+    private Map<String, Object> forget(com.fasterxml.jackson.databind.JsonNode body) {
+        String signature = text(body, "signature");
+        if (signature == null) {
+            throw new IllegalArgumentException("Не указан инцидент (signature).");
+        }
+        String causeKey = text(body, "causeKey");
+        boolean removed = causeKey == null
+                ? feedback.forget(signature) > 0
+                : feedback.forget(signature, causeKey);
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("ok", removed);
+        result.put("total", feedback.size());
+        return result;
+    }
+
+    /** Содержимое раздела «Память»: что анализатор уже знает. */
+    private Map<String, Object> memoryView() {
+        List<Map<String, Object>> items = new java.util.ArrayList<>();
+        for (io.github.loganalyzer.core.learn.FeedbackRecord record : feedback.all()) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("signature", record.getSignature());
+            item.put("causeKey", record.getCauseKey());
+            item.put("kind", record.getKind().name());
+            item.put("title", record.getTitle());
+            item.put("rule", record.getRule());
+            item.put("recommendation", record.getRecommendation());
+            item.put("steps", record.getSteps());
+            item.put("confirmations", record.getConfirmations());
+            item.put("rejections", record.getRejections());
+            item.put("sample", record.getSample());
+            item.put("updatedAt", String.valueOf(record.getUpdatedAt()));
+            items.add(item);
+        }
+        Map<String, Object> view = new java.util.LinkedHashMap<>();
+        view.put("enabled", config.getLearning().isEnabled());
+        view.put("file", feedback.getFile() == null ? "" : feedback.getFile().toString());
+        if (feedback.getLoadWarning() != null) {
+            view.put("warning", feedback.getLoadWarning());
+        }
+        view.put("records", items);
+        return view;
+    }
+
+    /** Ключ гипотезы считается на сервере — интерфейсу достаточно прислать её описание. */
+    private static String keyOf(com.fasterxml.jackson.databind.JsonNode cause) {
+        if (cause == null || !cause.isObject() || text(cause, "title") == null) {
+            throw new IllegalArgumentException("Не указана версия причины, к которой относится отзыв.");
+        }
+        return io.github.loganalyzer.core.learn.IncidentSignature.causeKey(
+                text(cause, "source"), text(cause, "rule"), text(cause, "title"));
+    }
+
+    private static String text(com.fasterxml.jackson.databind.JsonNode node, String field) {
+        if (node == null) {
+            return null;
+        }
+        com.fasterxml.jackson.databind.JsonNode value = node.path(field);
+        if (!value.isTextual() || value.asText().isBlank()) {
+            return null;
+        }
+        return value.asText().trim();
+    }
+
+    /** Шаги плана вводятся построчно — по строке на шаг. */
+    private static List<String> lines(String text) {
+        if (text == null) {
+            return List.of();
+        }
+        List<String> result = new java.util.ArrayList<>();
+        for (String line : text.split("\\R")) {
+            if (!line.isBlank()) {
+                result.add(line.trim());
+            }
+        }
+        return result;
     }
 
     /** Разбирает одну строку встроенными шаблонами — как команда {@code patterns --test}. */
@@ -278,6 +440,7 @@ public final class UiServer implements AutoCloseable {
         copy.setTimeline(config.getTimeline());
         copy.setRules(config.getRules());
         copy.setAnalysis(config.getAnalysis());
+        copy.setLearning(config.getLearning());
         copy.getParse().setZone(zone);
         return copy;
     }
